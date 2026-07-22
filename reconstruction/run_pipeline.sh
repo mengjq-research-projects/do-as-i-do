@@ -189,6 +189,13 @@ for OBJ_NAME in "${OBJECT_NAMES[@]}"; do
         --anchor-hand "$ANCHOR_HAND" \
         --ref-frame "$n"
 
+    # Optional trajectory smoothing to minimize depth inconsistencies
+    # Writes <..._optimized>_smooth.json; point visualize_3d.py at it below to use.
+    # LAYOUT_JSON_SMOOTH="${LAYOUT_JSON_OPT%.json}_smooth.json"
+    # python smooth_trajectory.py \
+    #     --input "$LAYOUT_JSON_OPT" \
+    #     --output "$LAYOUT_JSON_SMOOTH"
+
     # Optional interactive 3D visualization (needs viser in the sam3d env):
     # MESH_SCALE="$(python3 -c "import json; d=json.load(open('$LAYOUT_JSON_OPT')); print(d['translation_scale_optimization']['mesh_scale'])")"
     # python visualize_3d.py \
