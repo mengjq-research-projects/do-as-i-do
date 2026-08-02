@@ -107,10 +107,18 @@ Open the printed URL and use the **Frame** slider / **Play** button. Useful flag
 - `--port N` — viser port (default `8081`)
 - `--scene scene.xml --traj trajectory_mjwp.npz` — point at explicit files
 
-The shipped `whisking` demo runs this out of the box (no pipeline run needed). It uses the run's
-`scene.xml`, `trajectory_mjwp.npz`, and `config.yaml`, plus the meshes `scene.xml` references
-under `outputs/assets/` (`objects/whisking/visual.obj` + `convex/`, and the referenced
-`robots/sharpa/meshes/*.STL`).
+The shipped `whisking` demo runs this out of the box (no pipeline run needed), with **all three
+layers visible** — the demo bundles every asset the viewer needs:
+
+- `scene.xml`, `trajectory_mjwp.npz`, `config.yaml` — the retargeted (solid) layer
+- `trajectory_kinematic.npz` — the IK reference (blue ghost) layer
+- `outputs/mano/right/whisking/0/trajectory_keypoints.npz` — the MANO reference (orange) layer
+- the meshes `scene.xml` references under `outputs/assets/` (`objects/whisking/visual.obj` +
+  `convex/` — `visual.obj` also serves as the MANO layer's object mesh — and the referenced
+  `robots/sharpa/meshes/*.STL`)
+
+When you run the pipeline on your own video, each overlay layer auto-enables once its file exists and is
+silently skipped otherwise.
 
 ## Credits & licenses
 
