@@ -81,10 +81,19 @@ Written under `outputs/` (relative to the `retargeting/` directory):
 
 ## Visualize a retargeted trajectory
 
-`replay_viser.py` plays back a finished run (`scene.xml` + `trajectory_mjwp.npz`) in an
-interactive [viser](https://github.com/nerfstudio-project/viser) viewer **without re-running
-the optimization** — it reuses the pipeline's own `retargeting.utils.viser_viewer`. From the
-`retargeting/` directory in the `retargeting` env:
+`replay_viser.py` plays back a finished run in an interactive
+[viser](https://github.com/nerfstudio-project/viser) viewer **without re-running the
+optimization** — it reuses the pipeline's own `retargeting.utils.viser_viewer`. It overlays
+up to three aligned layers, each with a GUI visibility checkbox:
+
+1. **MANO reference** (orange) — the deforming MANO hand mesh + tracked object pose from the
+   Stage-1 output `outputs/mano/{hand}/{task}/{id}/trajectory_keypoints.npz`
+2. **IK reference** (transparent blue ghost) — the kinematic solution
+   `trajectory_kinematic.npz` (stage 4)
+3. **Retargeted trajectory** (solid) — the physics-optimized result `trajectory_mjwp.npz`
+   (stage 5)
+
+From the `retargeting/` directory in the `retargeting` env:
 
 ```bash
 conda activate retargeting
