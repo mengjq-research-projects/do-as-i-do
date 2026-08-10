@@ -7,7 +7,7 @@ name = "retargeting"
 version = "0.1.0"
 description = "Do as I Do retargeting: hand-object demos to robot hand trajectories"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
   "numpy",
   "torch",
@@ -45,6 +45,26 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["retargeting"]
+
+[tool.uv]
+# Resolve the pinned git dependency from explicit static metadata so uv does not
+# inherit the upstream MuJoCo index override during locking.
+dependency-metadata = [
+  { name = "mujoco-warp", version = "0.0.1", requires-python = ">=3.9", requires-dist = ["absl-py", "etils[epath]", "mujoco>=3.3.7", "numpy", "warp-lang>=1.9.1"] },
+]
+
+[[tool.uv.index]]
+name = "pypi-public"
+url = "https://pypi.org/simple"
+
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com"
+explicit = true
+
+[tool.uv.sources]
+mujoco = { index = "pypi-public" }
+warp-lang = { index = "nvidia" }
 
 [tool.ruff]
 line-length = 88
