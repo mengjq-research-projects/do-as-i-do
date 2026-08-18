@@ -76,7 +76,7 @@ then choose a pixel inside the object. Run the pipeline with that point:
 
 ```bash
 cd ~/projects/do-as-i-do/reconstruction
-./run_pipeline.sh \
+CUDA_VISIBLE_DEVICES=3 PYTHONUNBUFFERED=1 ./run_pipeline.sh \
   /data/jiaqimeng/do-as-i-do-runs/cup_demo/input.mp4 \
   100 cup right "620,410" "1"
 ```
@@ -86,6 +86,9 @@ label `1` is a positive object point and `0` excludes an area, for example
 `"620,410;80,80" "1;0"`. Pick a reference frame with a sharp, visible object,
 a visible anchor hand, and as little occlusion as possible. Avoid cuts and large
 camera motion because the current HaWoR invocation assumes a static camera.
+Select a free physical GPU with `nvidia-smi` and set `CUDA_VISIBLE_DEVICES` for
+the command. The script respects that explicit selection and defaults to GPU 0
+when the variable is unset.
 
 The high-quality Fast-SAM3D stage evaluates 25 pose samples and a render-compare
 optimization for every frame. On the current A100, a roughly 138-frame clip

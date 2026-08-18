@@ -111,7 +111,8 @@ unset _REPO_ROOT _MANAGED_ASSETS _MANAGED_CONDA_DIR
 unset -f _prefer_managed_dir _prefer_managed_file _prefer_managed_env
 
 # ── Host / GPU ──
-export CUDA_VISIBLE_DEVICES=0
+# Respect an explicit per-run GPU selection and otherwise default to GPU 0.
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 # Optional X display used by the click-based SAM3 segmentation UI (Stage 1).
 # Do not invent a display on headless hosts: pass point coordinates to
 # run_pipeline.sh or explicitly export DISPLAY/SAM3_DISPLAY after configuring X.

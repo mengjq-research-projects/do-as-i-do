@@ -123,12 +123,12 @@ FRAME_N=100  # 从 0 开始计数，选择手和物体都清楚可见的一帧
 
 ```bash
 cd ~/projects/do-as-i-do/reconstruction
-./run_pipeline.sh \
+CUDA_VISIBLE_DEVICES=3 PYTHONUNBUFFERED=1 ./run_pipeline.sh \
   /data/jiaqimeng/do-as-i-do-runs/cup_demo/input.mp4 \
   100 cup right "620,410" "1"
 ```
 
-最后两个参数分别是分号分隔的像素坐标和标签；`1` 是物体内部正样本，`0` 是排除区域。例如 `"620,410;80,80" "1;0"`。输出会写到输入视频所在目录。当前高质量 Fast-SAM3D 配置每帧进行 25 个姿态采样和 render-compare；在 A100 上，约 138 帧的视频通常需要 1.5–2 小时完成该阶段，时长随帧数近似线性增加。当前 Stage 3 不支持从中间帧自动续跑，因此运行期间不要中断。
+先用 `nvidia-smi` 选择空闲卡，再通过 `CUDA_VISIBLE_DEVICES=<物理 GPU 编号>` 为本次流水线指定 GPU；上例使用 GPU 3，脚本默认使用 GPU 0。最后两个参数分别是分号分隔的像素坐标和标签；`1` 是物体内部正样本，`0` 是排除区域。例如 `"620,410;80,80" "1;0"`。输出会写到输入视频所在目录。当前高质量 Fast-SAM3D 配置每帧进行 25 个姿态采样和 render-compare；在 A100 上，约 138 帧的视频通常需要 1.5–2 小时完成该阶段，时长随帧数近似线性增加。当前 Stage 3 不支持从中间帧自动续跑，因此运行期间不要中断。
 
 ### 重定向
 
