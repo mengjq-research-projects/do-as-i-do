@@ -253,11 +253,15 @@ def prepare_runtime(release_directory: Path) -> None:
     """Build small config/link trees consumed by the reconstruction scripts."""
     project_root = HERE.parent
     runtime_root = release_directory / "runtime"
+    # The upstream sam-3d-objects checkout ignores checkpoints/hf entirely.
+    # Fast-SAM3D tracks the same canonical config set, so use it to build both
+    # runtime trees instead of depending on a locally downloaded HF snapshot.
+    tracked_config_source = (
+        project_root / "reconstruction/modules/Fast-SAM3D/checkpoints/hf"
+    )
     sources = {
-        "sam3d": project_root
-        / "reconstruction/modules/sam-3d-objects/checkpoints/hf",
-        "fast-sam3d": project_root
-        / "reconstruction/modules/Fast-SAM3D/checkpoints/hf",
+        "sam3d": tracked_config_source,
+        "fast-sam3d": tracked_config_source,
     }
     weight_directory = sam3d_weight_directory(release_directory)
     if not weight_directory.is_dir():
