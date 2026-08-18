@@ -8,7 +8,7 @@ The pipeline switches between **4 conda envs** (names set in `config/paths.sh`).
 [`malik-group/HaWoR`](https://github.com/malik-group/HaWoR) (`hawor`),
 [`malik-group/tapnet`](https://github.com/malik-group/tapnet) (`tapnet`).
 
-The two options below are **fallbacks** (e.g. on Blackwell / RTX 50xx, where the forks' cu117/cu121 pins won't run):
+The two options below are **fallbacks** (e.g. on Blackwell / RTX 50xx, where older upstream CUDA pins won't run):
 
 - **Build fresh** — `./setup/01_create_envs.sh` (or one at a time: `./setup/01_create_envs.sh sam3|sam3d|hawor|tapnet`). Builds each env from the upstream repos' own dependency files + the recipes in the script. 
 - **From the exact pins here** — the `env/*.yml` files are full `conda env export`s of known-working envs, to be treated mainly as a version reference for manual installation.
@@ -35,10 +35,10 @@ cd mip-splatting/submodules/diff-gaussian-rasterization
 CUDA_HOME=$CONDA_PREFIX TORCH_CUDA_ARCH_LIST=12.0 FORCE_CUDA=1 python setup.py install
 ```
 
-If building HaWoR's DROID-SLAM / lietorch fails to compile with
-`error: cannot convert 'const at::DeprecatedTypeProperties' to 'c10::ScalarType'` in lietorch's `dispatch.h`,
-edit `modules/HaWoR/thirdparty/DROID-SLAM/thirdparty/lietorch/lietorch/include/dispatch.h` and rebuild
-(`cd modules/HaWoR/thirdparty/DROID-SLAM && python setup.py install`):
+HaWoR's DROID-SLAM fork targets Blackwell `sm_120`. The setup script therefore
+uses the known-working CUDA 12.8, GCC/G++ 14.3, Torch 2.9 + cu128 combination
+from `env/hawor.yml`. It also applies the required lietorch `dispatch.h`
+compatibility change automatically before building:
 ```diff
 -    at::ScalarType _st = ::detail::scalar_type(the_type);
 +    at::ScalarType _st = the_type.scalarType();
@@ -48,7 +48,7 @@ edit `modules/HaWoR/thirdparty/DROID-SLAM/thirdparty/lietorch/lietorch/include/d
 |---|---|---|---|
 | `sam3`   | `env/sam3.yml`   | 1 — SAM3 segmentation        | `env/sam3.yml` (or refer to original repository) |
 | `sam3d`  | `env/sam3d.yml`  | 2, 3, 4 — meshes, pose, opt  | `modules/sam-3d-objects/environments/default.yml` + `requirements*.txt` |
-| `hawor`  | `env/hawor.yml`  | 2 — hand reconstruction      | `modules/HaWoR/requirements.txt` (+ torch cu117) |
+| `hawor`  | `env/hawor.yml`  | 2 — hand reconstruction      | `modules/HaWoR/requirements.txt` + CUDA 12.8 / torch 2.9 cu128 |
 | `tapnet` | `env/tapnet.yml` | 2.5 — velocity tracking      | `modules/tapnet[torch]` (Python 3.10, torch 2.7 cu128) |
 
 

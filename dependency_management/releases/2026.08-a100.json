@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "release_id": "2026.08-a100",
+  "status": "managed_runtime_ready",
+  "artifact_root": "/data/jiaqimeng/retargeting_dev",
+  "platform": {
+    "os": "ubuntu-22.04",
+    "architecture": "x86_64",
+    "gpu_architecture": "nvidia-sm80",
+    "validated_gpu": "NVIDIA A100-SXM4-80GB",
+    "validated_driver": "580.126.20"
+  },
+  "source_environments": [
+    {
+      "name": "sam3",
+      "kind": "conda",
+      "python": "3.12.13",
+      "path": "/home/jiaqimeng/miniforge3/envs/sam3",
+      "pack": "env-packs/conda/sam3.tar.zst",
+      "pack_bytes": 3529479422,
+      "pack_sha256": "bdf6b4722ed6ff440ceb493343dec140e785e18b75941d972c188d9a8ae8cc43",
+      "install_target": "installed-envs/conda/sam3",
+      "smoke_imports": ["torch", "cv2", "numpy"],
+      "cuda_required": true
+    },
+    {
+      "name": "sam3d",
+      "kind": "conda",
+      "python": "3.11.0",
+      "path": "/home/jiaqimeng/miniforge3/envs/sam3d",
+      "pack": "env-packs/conda/sam3d.tar.zst",
+      "pack_bytes": 6517756504,
+      "pack_sha256": "69a60e2bcc019a8e0e52fee3d7e92a698ebf5b91c73c313fcf90c9b30962302d",
+      "install_target": "installed-envs/conda/sam3d",
+      "smoke_imports": ["torch", "pytorch3d", "gsplat", "nvdiffrast.torch", "moge"],
+      "cuda_required": true
+    },
+    {
+      "name": "hawor",
+      "kind": "conda",
+      "python": "3.10.20",
+      "path": "/home/jiaqimeng/miniforge3/envs/hawor",
+      "pack": "env-packs/conda/hawor.tar.zst",
+      "pack_bytes": 4972953655,
+      "pack_sha256": "e1e8671771e08b67e2a0376439b41bc71e0eb39885598c5e20ff83aa181c72d3",
+      "install_target": "installed-envs/conda/hawor",
+      "smoke_imports": ["torch", "pytorch3d", "ultralytics", "smplx"],
+      "cuda_required": true
+    },
+    {
+      "name": "tapnet",
+      "kind": "conda",
+      "python": "3.10.20",
+      "path": "/home/jiaqimeng/miniforge3/envs/tapnet",
+      "pack": "env-packs/conda/tapnet.tar.zst",
+      "pack_bytes": 3308806806,
+      "pack_sha256": "d2151d19366ea5e06a7ede52226a505b6e82b065c4f49022ae12e61b9ea2804b",
+      "install_target": "installed-envs/conda/tapnet",
+      "smoke_imports": ["torch", "mediapy"],
+      "cuda_required": true
+    },
+    {
+      "name": "retargeting",
+      "kind": "venv",
+      "python": "3.12.13",
+      "legacy_path": "/home/jiaqimeng/projects/do-as-i-do/retargeting/.venv",
+      "project": "retargeting",
+      "base_python": "installed-envs/conda/sam3/bin/python",
+      "install_target": "installed-envs/venv/retargeting",
+      "extras": ["dev"],
+      "smoke_imports": ["retargeting", "mujoco", "mujoco_warp", "warp"],
+      "cuda_required": true
+    },
+    {
+      "name": "isaac",
+      "kind": "venv",
+      "python": "3.12.13",
+      "isaac_sim": "6.0.1.0",
+      "legacy_path": "/home/jiaqimeng/projects/do-as-i-do/isaac_export/.venv-isaac",
+      "project": "isaac_export",
+      "base_python": "installed-envs/conda/sam3/bin/python",
+      "install_target": "installed-envs/venv/isaac",
+      "wheelhouse": "wheelhouse/isaac/isaac-sim-6.0.1.0",
+      "extras": ["dev"],
+      "smoke_imports": ["isaac_export"],
+      "smoke_distributions": {
+        "isaacsim": "6.0.1.0",
+        "numpy": "2.3.1"
+      }
+    }
+  ],
+  "python_tooling": {
+    "uv_version": "0.12.3",
+    "uv_binary_source": "/home/jiaqimeng/.local/bin/uv",
+    "uv_binary_target": "tools/uv/uv",
+    "uv_cache_source": "/home/jiaqimeng/.cache/uv",
+    "uv_cache_target": "cache/uv"
+  },
+  "source_assets": [
+    {
+      "name": "reconstruction-weights",
+      "kind": "model-weights",
+      "path": "/home/jiaqimeng/projects/do-as-i-do/reconstruction/weights",
+      "target": "assets/weights/reconstruction"
+    },
+    {
+      "name": "hawor-weights",
+      "kind": "model-weights",
+      "path": "/home/jiaqimeng/projects/do-as-i-do/reconstruction/modules/HaWoR/weights",
+      "target": "assets/weights/hawor"
+    },
+    {
+      "name": "metric3d-weights",
+      "kind": "model-weights",
+      "path": "/home/jiaqimeng/projects/do-as-i-do/reconstruction/modules/HaWoR/thirdparty/Metric3D/weights",
+      "target": "assets/weights/metric3d"
+    },
+    {
+      "name": "deployment-assets",
+      "kind": "third-party-offline-sources",
+      "path": "/home/jiaqimeng/projects/do-as-i-do/deployment_assets",
+      "target": "assets/third-party/deployment-assets"
+    },
+    {
+      "name": "isaac-wheelhouse",
+      "kind": "offline-wheelhouse",
+      "path": "/home/jiaqimeng/do-as-i-do-isaac-wheelhouse-6.0.1.0",
+      "target": "wheelhouse/isaac/isaac-sim-6.0.1.0"
+    }
+  ],
+  "licensed_assets": [
+    {
+      "name": "mano",
+      "status": "missing",
+      "target": "assets/licensed/mano",
+      "redistribution": "prohibited-unless-license-allows"
+    }
+  ],
+  "submodules": {
+    "reconstruction/modules/Fast-SAM3D": "823d4784dbf73a9a58ca8b2384dee1eaf8fc1c6b",
+    "reconstruction/modules/HaWoR": "2c3fa0c06e54a1b192c1ff692eaa89d526cd6317",
+    "reconstruction/modules/sam-3d-objects": "875b010016f4c86936985b74ffcd7230e6979d02",
+    "reconstruction/modules/sam3": "b8e18f5f021fb27c4f6eeb1a8f4ecfa3fa0bec39",
+    "reconstruction/modules/tapnet": "f2f8888a803051ea42cd79c89cfca6c25dfeae77"
+  },
+  "notes": [
+    "Reconstruction runtime paths prefer this release through the current symlink and retain repo-local fallbacks.",
+    "SAM3D runtime config/link trees are generated by dependency_management/manage.py prepare-runtime.",
+    "All four Reconstruction Conda packs are checksum-pinned and verified on NVIDIA compute capability 8.0.",
+    "Retargeting is rebuilt from its frozen lock using the shared offline uv cache; Isaac Sim is installed from the release wheelhouse.",
+    "Licensed assets such as MANO and gated model weights must be classified before packaging.",
+    "Raw venv directories are not portable release artifacts and are never copied into a release."
+  ]
+}

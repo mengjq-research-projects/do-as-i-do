@@ -1,2 +1,19 @@
 .venv/
+**/.venv/
 .python-version
+/deployment_assets/
+/environment_exports/
+/scripts/local_dev/
+
+# Generated model weights and runtime outputs
+/reconstruction/weights/
+/reconstruction/whisking/
+/retargeting/outputs/
+/isaac_export/outputs/
+/isaac_export/.venv-isaac/
+
+# Common local Python/cache noise
+**/__pycache__/
+*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/

@@ -1,0 +1,373 @@
+diff --git a/checkpoints/hf/pipeline.yaml b/checkpoints/hf/pipeline.yaml
+index 5da303e..75b472c 100644
+--- a/checkpoints/hf/pipeline.yaml
++++ b/checkpoints/hf/pipeline.yaml
+@@ -18,7 +18,7 @@ slat_cfg_strength: 1
+ slat_rescale_t: 1
+ downsample_ss_dist: 1
+ compile_model: true
+-ss_condition_input_mapping: [] 
++ss_condition_input_mapping: []
+ ss_preprocessor:
+   _target_: sam3d_objects.data.dataset.tdfy.preprocessor.PreProcessor
+   img_mask_joint_transform: []
+@@ -62,7 +62,7 @@ depth_model:
+   _target_: sam3d_objects.pipeline.depth_models.moge.MoGe
+   model:
+     _target_: moge.model.v1.MoGeModel.from_pretrained
+-    pretrained_model_name_or_path: Ruicheng/moge-vitl # auto-downloads model.pt from HF (was a hardcoded local path)
++    pretrained_model_name_or_path: ${oc.env:MOGE_CHECKPOINT}
+ slat_condition_input_mapping: []
+ slat_preprocessor:
+   _target_: sam3d_objects.data.dataset.tdfy.preprocessor.PreProcessor
+diff --git a/checkpoints/hf/slat_decoder_gs.yaml b/checkpoints/hf/slat_decoder_gs.yaml
+index ceef645..10683b1 100644
+--- a/checkpoints/hf/slat_decoder_gs.yaml
++++ b/checkpoints/hf/slat_decoder_gs.yaml
+@@ -1,24 +1,22 @@
+-
+ _target_: sam3d_objects.model.backbone.tdfy_dit.models.structured_latent_vae.decoder_gs.SLatGaussianDecoderTdfyWrapper
+-resolution: 64 
+-model_channels: 768 
+-latent_channels: 8  
+-num_blocks: 12      
+-num_heads: 12       
++resolution: 64
++model_channels: 768
++latent_channels: 8
++num_blocks: 12
++num_heads: 12
+ mlp_ratio: 4
+ attn_mode: swin
+-window_size: 8      
+-
++window_size: 8
+ representation_config:
+   lr:
+-    _xyz: 1.0   
+-    _features_dc: 1.0 
+-    _opacity: 1.0 
+-    _scaling: 1.0 
+-    _rotation: 0.1  
++    _xyz: 1.0
++    _features_dc: 1.0
++    _opacity: 1.0
++    _scaling: 1.0
++    _rotation: 0.1
+   perturb_offset: true
+   voxel_size: 1.5
+-  num_gaussians: 32  
++  num_gaussians: 32
+   2d_filter_kernel_size: 0.1
+   3d_filter_kernel_size: 0.0009
+   scaling_bias: 0.004
+diff --git a/checkpoints/hf/slat_decoder_gs_4.yaml b/checkpoints/hf/slat_decoder_gs_4.yaml
+index ada6a6d..ef89609 100644
+--- a/checkpoints/hf/slat_decoder_gs_4.yaml
++++ b/checkpoints/hf/slat_decoder_gs_4.yaml
+@@ -16,7 +16,7 @@ representation_config:
+     _rotation: 0.1
+   perturb_offset: true
+   voxel_size: 1.5
+-  num_gaussians: 4 
++  num_gaussians: 4
+   2d_filter_kernel_size: 0.1
+   3d_filter_kernel_size: 0.0009
+   scaling_bias: 0.004
+diff --git a/checkpoints/hf/slat_decoder_mesh.yaml b/checkpoints/hf/slat_decoder_mesh.yaml
+index adc9c68..74735a4 100644
+--- a/checkpoints/hf/slat_decoder_mesh.yaml
++++ b/checkpoints/hf/slat_decoder_mesh.yaml
+@@ -1,13 +1,12 @@
+-
+ _target_: sam3d_objects.model.backbone.tdfy_dit.models.structured_latent_vae.decoder_mesh.SLatMeshDecoderTdfyWrapper
+ resolution: 64
+-model_channels: 768 
++model_channels: 768
+ latent_channels: 8
+-num_blocks: 12  
++num_blocks: 12
+ num_heads: 12
+ mlp_ratio: 4
+ attn_mode: swin
+ window_size: 8
+ representation_config:
+-  use_color: true 
++  use_color: true
+ use_fp16: true
+diff --git a/checkpoints/hf/slat_generator.yaml b/checkpoints/hf/slat_generator.yaml
+index a97f6fc..859964b 100644
+--- a/checkpoints/hf/slat_generator.yaml
++++ b/checkpoints/hf/slat_generator.yaml
+@@ -1,7 +1,6 @@
+ module:
+   condition_embedder:
+     backbone:
+-
+       _target_: sam3d_objects.model.backbone.dit.embedder.embedder_fuser.EmbedderFuser
+       embedder_list:
+       - - _target_: sam3d_objects.model.backbone.dit.embedder.dino.Dino
+@@ -9,27 +8,26 @@ module:
+           input_size: 518
+           normalize_images: true
+           prenorm_features: true
+-        - - - image  
+-            - cropped  
++        - - - image
++            - cropped
+           - - rgb_image
+-            - full  
++            - full
+       - - _target_: sam3d_objects.model.backbone.dit.embedder.dino.Dino
+           dino_model: dinov2_vitl14_reg
+           input_size: 518
+           normalize_images: true
+           prenorm_features: true
+         - - - mask
+-            - cropped   
+-          - - rgb_image_mask  
+-            - full  
++            - cropped
++          - - rgb_image_mask
++            - full
+       projection_net_hidden_dim_multiplier: 4.0
+       use_pos_embedding: learned
+   generator:
+     backbone:
+       _target_: sam3d_objects.model.backbone.generator.flow_matching.model.FlowMatching
+-      inference_steps: 12 
++      inference_steps: 12
+       reverse_fn:
+-     
+         _target_: sam3d_objects.model.backbone.generator.classifier_free_guidance.ClassifierFreeGuidance
+         backbone:
+           _target_: sam3d_objects.model.backbone.tdfy_dit.models.structured_latent_flow.SLatFlowModelTdfyWrapper
+@@ -40,15 +38,15 @@ module:
+           io_block_channels:
+           - 128
+           mlp_ratio: 4
+-          model_channels: 1024 
+-          num_blocks: 24 #
++          model_channels: 1024
++          num_blocks: 24
+           num_heads: 16
+           num_io_res_blocks: 2
+           out_channels: 8
+-          patch_size: 2 
+-          pe_mode: ape  
++          patch_size: 2
++          pe_mode: ape
+           qk_rms_norm: true
+-          resolution: 64 
++          resolution: 64
+           use_fp16: true
+         p_unconditional: 0.0
+         strength: 0.0
+diff --git a/checkpoints/hf/ss_decoder.yaml b/checkpoints/hf/ss_decoder.yaml
+index c44531a..7982f7f 100644
+--- a/checkpoints/hf/ss_decoder.yaml
++++ b/checkpoints/hf/ss_decoder.yaml
+@@ -1,9 +1,8 @@
+ _target_: sam3d_objects.model.backbone.tdfy_dit.models.sparse_structure_vae.SparseStructureDecoderTdfyWrapper
+-out_channels: 1    
+-latent_channels: 8 
++out_channels: 1
++latent_channels: 8
+ num_res_blocks: 2
+ num_res_blocks_middle: 2
+-
+ channels:
+ - 512
+ - 128
+diff --git a/checkpoints/hf/ss_encoder.yaml b/checkpoints/hf/ss_encoder.yaml
+index e69de29..2a882b6 100644
+--- a/checkpoints/hf/ss_encoder.yaml
++++ b/checkpoints/hf/ss_encoder.yaml
+@@ -0,0 +1,10 @@
++_target_: sam3d_objects.model.backbone.tdfy_dit.models.sparse_structure_vae.SparseStructureEncoderTdfyWrapper
++return_raw: True
++in_channels: 1
++latent_channels: 8
++channels:
++- 32
++- 128
++- 512
++num_res_blocks: 2
++num_res_blocks_middle: 2
+diff --git a/checkpoints/hf/ss_generator.yaml b/checkpoints/hf/ss_generator.yaml
+index 6cbe50b..35df0ea 100644
+--- a/checkpoints/hf/ss_generator.yaml
++++ b/checkpoints/hf/ss_generator.yaml
+@@ -1,4 +1,3 @@
+-
+ module:
+   condition_embedder:
+     backbone:
+@@ -9,25 +8,22 @@ module:
+         - 1.0
+       dropout_prob: 0.1
+       embedder_list:
+-
+       - - _target_: sam3d_objects.model.backbone.dit.embedder.dino.Dino
+           dino_model: dinov2_vitl14_reg
+           input_size: 518
+           normalize_images: true
+         - - - image
+-            - cropped   
++            - cropped
+           - - rgb_image
+-            - full      
+-
++            - full
+       - - _target_: sam3d_objects.model.backbone.dit.embedder.dino.Dino
+           dino_model: dinov2_vitl14_reg
+           input_size: 518
+           normalize_images: true
+         - - - mask
+-            - cropped   
++            - cropped
+           - - rgb_image_mask
+-            - full      
+- 
++            - full
+       - - _target_: sam3d_objects.model.backbone.dit.embedder.pointmap.PointPatchEmbed
+           embed_dim: 512
+           input_size: 256
+@@ -39,7 +35,7 @@ module:
+             - full
+       force_drop_modalities: null
+       freeze: true
+-      projection_net_hidden_dim_multiplier: 4.0 
++      projection_net_hidden_dim_multiplier: 4.0
+       use_pos_embedding: learned
+   generator:
+     backbone:
+@@ -47,8 +43,7 @@ module:
+       batch_mode: true
+       cfg_modalities:
+       - shape
+-      inference_steps: 2  
+-  
++      inference_steps: 2
+       loss_weights:
+         6drotation_normalized: 0.1
+         _target_: sam3d_objects.config.utils.make_dict
+@@ -61,7 +56,6 @@ module:
+       reverse_fn:
+         _target_: sam3d_objects.model.backbone.generator.classifier_free_guidance.ClassifierFreeGuidanceWithExternalUnconditionalProbability
+         backbone:
+- 
+           _target_: sam3d_objects.model.backbone.tdfy_dit.models.mot_sparse_structure_flow.SparseStructureFlowTdfyWrapper
+           cond_channels: 1024
+           condition_embedder: null
+@@ -71,7 +65,6 @@ module:
+           in_channels: 8
+           is_shortcut_model: true
+           latent_mapping:
+-    
+             6drotation_normalized:
+               _target_: sam3d_objects.model.backbone.tdfy_dit.models.mm_latent.Latent
+               in_channels: 6
+@@ -80,7 +73,6 @@ module:
+                 _target_: sam3d_objects.model.backbone.tdfy_dit.models.mm_latent.LearntPositionEmbedder
+                 model_channels: 1024
+                 token_len: 1
+-           
+             scale:
+               _target_: sam3d_objects.model.backbone.tdfy_dit.models.mm_latent.Latent
+               in_channels: 3
+@@ -89,7 +81,6 @@ module:
+                 _target_: sam3d_objects.model.backbone.tdfy_dit.models.mm_latent.LearntPositionEmbedder
+                 model_channels: 1024
+                 token_len: 1
+-           
+             shape:
+               _target_: sam3d_objects.model.backbone.tdfy_dit.models.mm_latent.Latent
+               in_channels: 8
+@@ -99,7 +90,6 @@ module:
+                 model_channels: 1024
+                 patch_size: 1
+                 resolution: 16
+-           
+             translation:
+               _target_: sam3d_objects.model.backbone.tdfy_dit.models.mm_latent.Latent
+               in_channels: 3
+@@ -108,7 +98,6 @@ module:
+                 _target_: sam3d_objects.model.backbone.tdfy_dit.models.mm_latent.LearntPositionEmbedder
+                 model_channels: 1024
+                 token_len: 1
+-          
+             translation_scale:
+               _target_: sam3d_objects.model.backbone.tdfy_dit.models.mm_latent.Latent
+               in_channels: 1
+diff --git a/sam3d_objects/model/backbone/dit/embedder/dino.py b/sam3d_objects/model/backbone/dit/embedder/dino.py
+index 3cd3b6d..5814f01 100644
+--- a/sam3d_objects/model/backbone/dit/embedder/dino.py
++++ b/sam3d_objects/model/backbone/dit/embedder/dino.py
+@@ -1,4 +1,5 @@
+ # Copyright (c) Meta Platforms, Inc. and affiliates.
++import os
+ import torch
+ from typing import Optional, Dict, Any
+ import warnings
+@@ -25,6 +26,18 @@ class Dino(torch.nn.Module):
+         if backbone_kwargs is None:
+             backbone_kwargs = {}
+ 
++        local_repo = os.environ.get("DINOV2_REPO")
++        if local_repo:
++            if not os.path.isfile(os.path.join(local_repo, "hubconf.py")):
++                raise FileNotFoundError(
++                    f"DINOV2_REPO does not contain hubconf.py: {local_repo}"
++                )
++            repo_or_dir = local_repo
++            source = "local"
++            # SAM3D loads the final DINO parameters from its own checkpoint.
++            # Avoid a redundant torch.hub download of upstream pretrained weights.
++            backbone_kwargs.setdefault("pretrained", False)
++
+         with warnings.catch_warnings():
+             warnings.simplefilter("ignore")
+             
+diff --git a/sam3d_objects/pipeline/inference_pipeline.py b/sam3d_objects/pipeline/inference_pipeline.py
+index 13a051e..293b673 100644
+--- a/sam3d_objects/pipeline/inference_pipeline.py
++++ b/sam3d_objects/pipeline/inference_pipeline.py
+@@ -20,9 +20,10 @@ def set_attention_backend():
+ 
+     logger.info(f"GPU name is {gpu_name}")
+     if "A100" in gpu_name or "H100" in gpu_name or "H200" in gpu_name:
+-        # logger.info("Use flash_attn")
+-        os.environ["ATTN_BACKEND"] = "flash_attn"
+-        os.environ["SPARSE_ATTN_BACKEND"] = "flash_attn"
++        # Use PyTorch's built-in Flash SDPA. Requiring the separate
++        # flash-attn extension makes the offline deployment fail at import.
++        os.environ["ATTN_BACKEND"] = "torch_flash_attn"
++        os.environ["SPARSE_ATTN_BACKEND"] = "sdpa"
+ 
+ set_attention_backend()
+ 
+diff --git a/track_object.py b/track_object.py
+index 7e8ac7c..3924437 100644
+--- a/track_object.py
++++ b/track_object.py
+@@ -94,7 +94,10 @@ from pytorch3d.renderer import (
+     MeshRasterizer, SoftPhongShader, PointLights, TexturesVertex,
+ )
+ 
+-from notebook.inference import Inference, load_image, load_mask
++# `notebook/` is a source directory, not a package. Importing
++# `notebook.inference` resolves to Jupyter's installed `notebook` package on
++# many environments, so import the local module from the path inserted above.
++from inference import Inference, load_image, load_mask  # type: ignore[import-not-found]
+ from sam3d_objects.pipeline.inference_utils import (
+     voxelize_mesh,
+     prune_sparse_structure,
+@@ -2045,4 +2048,4 @@ def main():
+ 
+ 
+ if __name__ == "__main__":
+-    main()
+\ No newline at end of file
++    main()
+

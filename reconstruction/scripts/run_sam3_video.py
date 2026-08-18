@@ -255,7 +255,15 @@ def main():
 
     # Build predictor
     print("Loading SAM3 model...")
-    predictor = build_sam3_video_predictor()
+    checkpoint_path = os.environ.get("SAM3_CHECKPOINT")
+    if checkpoint_path and os.path.isfile(checkpoint_path) and os.path.getsize(checkpoint_path) > 0:
+        print(f"Using local SAM3 checkpoint: {checkpoint_path}")
+        predictor = build_sam3_video_predictor(
+            checkpoint_path=checkpoint_path,
+        )
+    else:
+        print("Local SAM3 checkpoint not found; falling back to Hugging Face.")
+        predictor = build_sam3_video_predictor()
 
     # Start session
     print(f"Starting session on: {args.video}")

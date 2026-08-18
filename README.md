@@ -4,40 +4,54 @@
 
 [**Project Page**](https://do-as-i-do.com/) | [**arXiv**](https://arxiv.org/abs/2606.19333) 
 
-这是 Do as I Do 的代码发布版本：整个流程分为三个阶段，从单段手物交互演示视频出发，先重建物体与手部运动，再将该运动重定向到机器人手上，最后可选地在双 UR3e 机械臂和 Sharpa Wave 灵巧手上回放结果。
+这是 Do as I Do 的代码发布版本：从单段手物交互演示视频出发，先重建物体与手部运动，再将该运动重定向到机器人手。重定向结果可以进入两个相互独立的下游方向：导出为 Isaac Sim 运动学回放数据，或适配到双 UR3e 机械臂和 Sharpa Wave 灵巧手进行 MuJoCo / 真实硬件回放。
 
 ## 流程概览
 
 | 阶段 | 主要入口 | 输入 | 输出 |
 |---|---|---|---|
 | `reconstruction/` | `reconstruction/run_pipeline.sh` | 演示视频 + 参考帧 / 目标物体 / 锚定手 | mask、物体网格、pointmap、手部网格、物体 6-DoF 轨迹 |
-| `retargeting/` | `retargeting/launch.py` | reconstruction 输出目录 | MuJoCo 场景、IK 轨迹、物理优化后的 `trajectory_mjwp.npz` |
-| `deployment/` | `deployment/mujoco_replay/replay_retarget.py`, `deployment/robot_replay/run_npz.py` | retargeting 生成的 `trajectory_mjwp.npz` | 双 UR3e 关节轨迹，以及可选的真实硬件回放 |
+| `retargeting/` | `retargeting/run_pipeline.sh` | reconstruction 输出目录 | MuJoCo 场景、IK 轨迹、物理优化后的 `trajectory_mjwp.npz` |
+| `isaac_export/` | `isaac_export/run_pipeline.sh` | retargeting 运行目录 | 标准轨迹、manifest、质量报告和 Isaac 环境报告 |
+| `deployment/` | `deployment/run_pipeline.sh` | retargeting 生成的 `trajectory_mjwp.npz` | 双 UR3e 关节轨迹，以及可选的真实硬件回放 |
 
-仓库尽量保持三个阶段彼此独立。外部依赖代码以 git submodule 的形式随仓库一并提供，并已经带有项目所需的定制修改。
+面向使用者的阶段入口统一为 `run_pipeline.sh`。各目录中的 `.py` 文件是内部实现或测试模块，不需要手动选择 Python 解释器；shell 入口会自动使用对应的托管环境或仓库本地环境。
+
+各模块保持独立环境和清晰的数据边界。`isaac_export/` 与 `deployment/` 都是 `retargeting/` 的下游，不互相依赖。外部依赖代码以 git submodule 的形式随仓库一并提供，并已经带有项目所需的定制修改。
 
 ## 仓库结构
 
 - **`reconstruction/`** — 从手物交互演示视频中完成物体与手部重建，以及 6-DoF 位姿跟踪（SAM3 -> SAM3D mesh -> MoGe pointmaps -> HaWoR -> TAPIR -> guided diffusion tracking -> 可选投影）。详见 [`reconstruction/README.md`](reconstruction/README.md)。
 - **`retargeting/`** — 将重建得到的手物演示转换为机器人手轨迹（数据处理 -> 凸分解 -> MJCF 场景生成 -> IK -> MuJoCo Warp 中的采样式 MPC）。详见 [`retargeting/README.md`](retargeting/README.md)。
+- **`isaac_export/`** — 层级 A 的独立下游导出器。当前完成 Retargeting 轨迹标准化、22 个 Sharpa 关节协议冻结、时间与 warmup 处理、manifest 和自动质量报告；后续 USD 资产转换与 Isaac 回放需要 Isaac Sim 环境。详见 [`isaac_export/README.md`](isaac_export/README.md)。
 - **`deployment/`** — 将 retargeting 结果适配到双 UR3e 场景，并可进一步发送到真实机器人系统。详见 [`deployment/README.md`](deployment/README.md)。
 - **`reconstruction/whisking/`** — 仓库内附带的 whisk 示例处理结果。
 - **`retargeting/outputs/sharpa/right/whisking/0/`** — 仓库内附带的 whisk 示例 retargeting 输出，其中包括可直接查看的 `trajectory_mjwp.npz`。
+- **`isaac_export/outputs/whisking/`** — 运行导出器后生成的 whisking 标准轨迹和报告；该目录是本地生成物，不进入版本控制。
 
 ## 快速开始
 
 使用 submodule 一起克隆：
 
 ```bash
-GIT_LFS_SKIP_SMUDGE=1 git clone --recurse-submodules https://github.com/malik-group/do-as-i-do.git
+GIT_LFS_SKIP_SMUDGE=1 git clone --recurse-submodules \
+  https://github.com/mengjq-research-projects/do-as-i-do.git
 cd do-as-i-do
+
+# 从共享依赖包离线恢复并校验全部运行环境
+./setup_all.sh --managed-offline
 ```
+
+这一条命令已经包含资源校验、运行时链接生成、四个 Reconstruction Conda 环境恢复、Retargeting venv、完整 Isaac Sim 6.0.1.0 venv，以及 CUDA/A100 烟雾测试。它不会访问 GitHub、PyPI、Hugging Face 或 NVIDIA，也不需要再单独执行 `dependency_management/manage.sh`。命令可以安全重复运行。
+
+共享依赖包位于 `/data/jiaqimeng/retargeting_dev`，模型、环境和缓存均与 Git 仓库分离。MANO 受许可证限制，仍需由获授权的使用者手动提供。环境结构和维护说明见 [`ENVIRONMENT.md`](ENVIRONMENT.md) 与 [`dependency_management/README.md`](dependency_management/README.md)。
 
 然后按你的需求选择阶段：
 
 1. 使用 [`reconstruction/run_pipeline.sh`](reconstruction/run_pipeline.sh) 从视频执行重建。
-2. 使用 [`retargeting/launch.py`](retargeting/launch.py) 将结果重定向到机器人手。
-3. 使用 [`deployment/`](deployment/README.md) 下的工具进行预览或部署。
+2. 使用 [`retargeting/run_pipeline.sh`](retargeting/run_pipeline.sh) 将结果重定向到机器人手。
+3. 使用 [`isaac_export/run_pipeline.sh`](isaac_export/run_pipeline.sh) 生成 Isaac Level A 标准轨迹和自动检查报告。
+4. 或使用 [`deployment/`](deployment/README.md) 下的工具进行 MuJoCo 预览和真实硬件部署。
 
 ## 环境概览
 
@@ -46,30 +60,23 @@ cd do-as-i-do
 | 区域 | 管理方式 | 默认环境名 | 说明 |
 |---|---|---|---|
 | `reconstruction/` | Conda | `sam3`, `sam3d`, `hawor`, `tapnet` | 四个阶段横跨不同的 Python/CUDA 依赖，并依赖仓库内 vendored fork |
-| `retargeting/` | `uv` 或 Conda | `uv` 下为 `.venv`，Conda 下为 `retargeting` | 单个 Python 3.12 项目，自带独立 `pyproject.toml` |
+| `retargeting/` | 托管 venv | `current/installed-envs/venv/retargeting` | 由离线 uv 缓存按锁文件重建 |
+| `isaac_export/` | 托管 venv | `current/installed-envs/venv/isaac` | 包含固定的 Isaac Sim 6.0.1.0 |
 | `deployment/` | Conda | `deployment` | 还需要专有 Sharpa Wave SDK 和机器人配置 |
 
-### 根目录的 `uv` 工作流
+### 新人一键环境准备
 
-根目录的 [`pyproject.toml`](pyproject.toml) 用来给 `uv` 管理工作区级开发工具。它只在仓库根目录维护一个小型共享开发环境，而 `retargeting` 真正的运行时环境仍由 [`retargeting/pyproject.toml`](retargeting/pyproject.toml) 管理。
+推荐从仓库根目录执行：
 
 ```bash
-# 如果还没安装 uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 可选：在仓库根目录安装共享开发工具
-uv sync
-uv sync --group dev
-
-# retargeting 运行时环境
-cd retargeting
-uv sync
-uv run python launch.py --task whisking --raw-dir ../reconstruction/whisking
+./setup_all.sh --managed-offline
 ```
 
-`retargeting/` 的 `uv` 项目基于 Python 3.12 解析依赖。如果你需要与导出的 Conda 环境严格对齐的参考包版本，请以 [`retargeting/env/retargeting.yml`](retargeting/env/retargeting.yml) 作为版本参考。
+如需先预览脚本将执行的操作：
 
-这里让 `uv` 覆盖的范围仅限于共享开发工具和 `retargeting/` 这个 Python 项目。`reconstruction/` 仍然依赖四个对 CUDA 比较敏感的 Conda 环境，`deployment/` 也仍然依赖它自己的导出 Conda 环境以及专有硬件 SDK。
+```bash
+./setup_all.sh --managed-offline --dry-run
+```
 
 ## 分阶段入口
 
@@ -90,20 +97,44 @@ cd reconstruction
 
 ```bash
 cd retargeting
-python launch.py --task whisking --raw-dir ../reconstruction/whisking
+./run_pipeline.sh --task whisking --raw-dir ../reconstruction/whisking
 ```
 
 该阶段读取 reconstruction 的输出，构建 MuJoCo 场景、求解 IK，并执行 MuJoCo Warp 物理优化。完整安装说明见 [`retargeting/README.md`](retargeting/README.md)。
+
+### Isaac Level A 导出
+
+仓库附带的 whisking 结果可以直接转换，不需要重新运行 Reconstruction 或 Retargeting：
+
+```bash
+./isaac_export/run_pipeline.sh export
+```
+
+默认读取 `retargeting/outputs/sharpa/right/whisking/0/`，跳过 MJWP warmup，并输出到 `isaac_export/outputs/whisking/`：
+
+- `trajectory.npz`：显式时间戳、手根位姿、22 个手指关节和物体位姿；
+- `manifest.json`：关节顺序、坐标、单位、四元数、时间和源文件约定；
+- `quality_report.json`：有限值、四元数、跳变、关节限位和时间连续性检查；
+- `environment_report.json`：当前机器能否执行 USD 转换、Isaac 回放和无头渲染。
+
+导出其他右手 Sharpa 任务时只需要更换运行目录：
+
+```bash
+./isaac_export/run_pipeline.sh export \
+    --run-dir retargeting/outputs/sharpa/right/<task>/<id> \
+    --output-dir isaac_export/outputs/<task>
+```
+
+当前层级 A 已完成与 Isaac 无关的标准数据边界。生成 `sharpa_right.usd`、`object.usd`、`scene.usd`、回放视频和关键帧截图仍需安装包含 `isaacsim`、`omni.usd` 和 `pxr` 的 Isaac Sim 运行环境。详细协议和当前边界见 [`isaac_export/README.md`](isaac_export/README.md)。
 
 ### 部署
 
 在 MuJoCo / viser 中预览仓库内附带的 retargeting 结果：
 
 ```bash
-cd deployment/mujoco_replay
-python replay_retarget.py \
+./deployment/run_pipeline.sh mujoco-replay \
     --side right \
-    --traj ../../retargeting/outputs/sharpa/right/whisking/0/trajectory_mjwp.npz \
+    --traj retargeting/outputs/sharpa/right/whisking/0/trajectory_mjwp.npz \
     --speed 0.25
 ```
 
@@ -112,9 +143,13 @@ python replay_retarget.py \
 ## 外部资源与权限
 
 - **子模块**：`reconstruction/modules/` 是 reconstruction 流程所必需的。
-- **Hugging Face 权限**：访问 `facebook/sam3` 和 `facebook/sam-3d-objects` 时需要。
+- **Hugging Face 权限**：只有发布维护者刷新受控权重时需要；新人离线启动不需要。
 - **MANO 资源**：HaWoR 依赖该资源。
+- **Isaac Sim**：只在生成 USD、执行 Isaac 运动学回放和渲染时需要；标准轨迹与质量报告导出不依赖 Isaac Sim。
 - **Sharpa Wave SDK**：仅 `deployment/robot_replay/` 需要，仓库中不附带该 SDK。
 
 关于各环境对应的命令、精确依赖版本和安装取舍，请结合 [`ENVIRONMENT.md`](ENVIRONMENT.md) 以及上面链接到的各阶段文档一起查看。
 
+## TODO
+
+- [ ] 为 Isaac 场景添加默认摄像机，并支持在无显示器环境中渲染完整回放 MP4。

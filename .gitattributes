@@ -1,0 +1,2 @@
+# Patch payloads preserve upstream context verbatim for reliable git apply.
+reconstruction/patches/*.patch -whitespace

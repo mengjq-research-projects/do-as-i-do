@@ -7,7 +7,7 @@
 ```
 retargeting/
 ├── launch.py                # 唯一主入口（5 个阶段的流水线）
-├── pyproject.toml           # Python 项目定义（可用 `pip install -e .` 安装）
+├── pyproject.toml           # Python 项目与依赖定义
 ├── config/
 │   ├── default.yaml         # 优化器 / 仿真器默认参数
 │   └── override/do_as_i_do.yaml  # 数据集相关覆盖配置
@@ -25,33 +25,26 @@ retargeting/
 - 需要一个浏览器来打开 viser viewer 的 Web 界面。
 - 需要一个 reconstruction 阶段的输出目录作为输入，例如 whisking 示例。
 
-## 安装（一次性）
+## 环境准备（一次性）
+
+在仓库根目录运行统一的离线安装入口：
 
 ```bash
-cd retargeting
-conda create -y -n retargeting python=3.12
-conda activate retargeting
-pip install -e .
+cd ~/projects/do-as-i-do
+./setup_all.sh --managed-offline
 ```
 
-可选的 `uv` 工作流：
-
-```bash
-cd retargeting
-uv sync
-uv run python launch.py --task whisking --raw-dir ../reconstruction/whisking
-```
-
-这里的依赖会按照 `pyproject.toml` 中的约束在 Python 3.12 下解析。如果你需要与已验证环境完全一致的参考版本，请把 [`env/retargeting.yml`](env/retargeting.yml) 作为版本基准。
-
-关于精确版本和 `uv` 元数据 / index 处理说明，请参考 [`env/README.md`](env/README.md)。
+该命令会从托管依赖包中离线恢复并校验 Retargeting 环境。新人不需要再运行
+`conda create`、`pip install`、`uv sync` 或 `dependency_management/manage.sh`。
+依赖发布和故障排查细节见
+[`dependency_management/README.md`](../dependency_management/README.md)。
 
 ## 运行
 
 先对一段视频运行 reconstruction 流程，例如 whisking 示例；之后在 `retargeting/` 目录中执行：
 
 ```bash
-python launch.py --task whisking --raw-dir ../reconstruction/whisking
+./run_pipeline.sh --task whisking --raw-dir ../reconstruction/whisking
 ```
 
 其中 `--raw-dir` 指向 reconstruction 的输出目录，也就是视频对应目录；`--task` 是该视频的任务名。常用参数：
@@ -93,8 +86,7 @@ python launch.py --task whisking --raw-dir ../reconstruction/whisking
 在 `retargeting` 环境中，从 `retargeting/` 目录执行：
 
 ```bash
-conda activate retargeting
-python replay_viser.py                       # whisking demo → http://localhost:8081
+./run_pipeline.sh replay                     # whisking demo → http://localhost:8081
 ```
 
 打开终端打印出的 URL，然后使用 **Frame** 滑条和 **Play** 按钮。常用参数：

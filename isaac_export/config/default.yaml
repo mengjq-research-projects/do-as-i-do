@@ -1,0 +1,7 @@
+trajectory_filename: trajectory_mjwp.npz
+skip_warmup: true
+expected_robot: sharpa
+expected_embodiment: right
+expected_finger_joints: 22
+position_jump_warning_m: 0.25
+joint_jump_warning_rad: 1.0

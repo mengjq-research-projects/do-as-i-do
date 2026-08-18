@@ -10,6 +10,7 @@ Usage:
 import argparse
 import json
 import math
+import os
 from pathlib import Path
 
 import torch
@@ -77,7 +78,13 @@ def predict_video_gravity(
         indices = np.round(np.linspace(0, len(image_paths) - 1, max_frames)).astype(int)
         image_paths = [image_paths[i] for i in indices]
 
-    weights = "pinhole" if camera_model == "pinhole" else "distorted"
+    weights = (
+        os.environ.get("GEOCALIB_CHECKPOINT", "pinhole")
+        if camera_model == "pinhole"
+        else "distorted"
+    )
+    if weights not in {"pinhole", "distorted"} and not Path(weights).is_file():
+        raise FileNotFoundError(f"GeoCalib checkpoint not found: {weights}")
     model = GeoCalib(weights=weights).to(device)
     model.eval()
 

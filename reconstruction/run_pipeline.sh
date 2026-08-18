@@ -9,7 +9,7 @@
 #   3  object tracking using guided pose prediction ; project mesh ; layout -> camera frame        [sam3d]
 #   4  optimize translation/scale (+ optional viser viz)                     [sam3d]
 #
-# Usage:  ./run_pipeline.sh VIDEO_PATH [FRAME_N] [OBJECT] [ANCHOR_HAND]
+# Usage:  ./run_pipeline.sh VIDEO_PATH [FRAME_N] [OBJECT] [ANCHOR_HAND] [OBJECT_POINTS] [POINT_LABELS]
 # Example: ./run_pipeline.sh /data/pickplan_pan/pickplan_pan.mp4 28 pan right
 set -eo pipefail
 
@@ -26,6 +26,8 @@ VIDEO_PATH="$(realpath "$VIDEO_PATH")"
 n="${2:-28}"
 OBJECT_NAMES=("${3:-pan}")
 ANCHOR_HAND="${4:-right}"
+OBJECT_POINTS="${5:-}"
+POINT_LABELS="${6:-1}"
 
 # ──────────────────────────── Derived paths ────────────────────────────
 VIDEO_DIR="$(dirname "$VIDEO_PATH")"
@@ -38,7 +40,20 @@ MASKS_DIR="$VIDEO_DIR/video_segmentation/masks/frame_$(printf "%06d" "$n")_masks
 VIDEO_MASKS_DIR="$VIDEO_DIR/video_segmentation/masks"
 HAND_MESHES_PATH="$VIDEO_DIR/$VIDEO_NAME/all_hand_meshes.npz"
 
-source "$(conda info --base)/etc/profile.d/conda.sh"
+if command -v conda >/dev/null 2>&1; then
+    CONDA_BASE="$(conda info --base)"
+elif [[ -n "${DO_AS_I_DO_CONDA_BASE:-}" && -f "$DO_AS_I_DO_CONDA_BASE/etc/profile.d/conda.sh" ]]; then
+    CONDA_BASE="$DO_AS_I_DO_CONDA_BASE"
+elif [[ -f /home/jiaqimeng/miniforge3/etc/profile.d/conda.sh ]]; then
+    CONDA_BASE=/home/jiaqimeng/miniforge3
+elif [[ -f "$HOME/miniforge3/etc/profile.d/conda.sh" ]]; then
+    CONDA_BASE="$HOME/miniforge3"
+else
+    echo "Conda initialization script was not found." >&2
+    echo "Set DO_AS_I_DO_CONDA_BASE to the Miniforge/Conda installation." >&2
+    exit 1
+fi
+source "$CONDA_BASE/etc/profile.d/conda.sh"
 
 # Frame extraction (Steps 0 & 1) uses ffmpeg from the sam3 env — activate it FIRST so
 # no system/base ffmpeg is required and the pipeline runs directly on a clip.
@@ -47,7 +62,8 @@ conda activate "$ENV_SAM3"
 # ──────────────── Step 0: Extract all frames ───────────────────────────
 echo "=== Extracting all frames ==="
 mkdir -p "$VIDEO_DIR/all_frames"
-ffmpeg -i "$VIDEO_PATH" -vsync 0 -start_number 0 "$VIDEO_DIR/all_frames/%06d.png"
+ffmpeg -y -i "$VIDEO_PATH" -fps_mode passthrough -start_number 0 \
+    "$VIDEO_DIR/all_frames/%06d.png"
 
 # ──────────────── Step 1: Save config, extract ref frame, run SAM3 ────
 echo "=== Saving config and extracting reference frame ==="
@@ -61,35 +77,60 @@ cat > "$VIDEO_DIR/config.json" <<EOF
 }
 EOF
 
-ffmpeg -y -i "$VIDEO_PATH" -vf "select=eq(n\,${n})" -vsync 0 -vframes 1 "$FRAME_PATH"
+ffmpeg -y -i "$VIDEO_PATH" -vf "select=eq(n\,${n})" \
+    -fps_mode passthrough -frames:v 1 -update 1 "$FRAME_PATH"
 
 # sam3 env already active (from Step 0) — provides both ffmpeg and the SAM3 model
 cd "$SCRIPTS_DIR"
+mkdir -p "$VIDEO_MASKS_DIR"
+TOTAL_FRAME_COUNT="$(find "$VIDEO_DIR/all_frames" -maxdepth 1 -type f -name '*.png' | wc -l)"
 
 echo "=== Running SAM3 video segmentation (objects, click-based) ==="
 for OBJ_NAME in "${OBJECT_NAMES[@]}"; do
     OBJ_ID="${OBJ_NAME// /_}"
-    DISPLAY="$SAM3_DISPLAY" python run_sam3_video.py \
-        --video "$VIDEO_PATH" \
-        --click \
-        --obj_id "$OBJ_ID" \
-        --frame_idx "$n"
+    OBJECT_MASK_COUNT="$(find "$VIDEO_MASKS_DIR" -type f -name "$OBJ_ID.png" | wc -l)"
+    if [[ "$TOTAL_FRAME_COUNT" -gt 0 && "$OBJECT_MASK_COUNT" -eq "$TOTAL_FRAME_COUNT" ]]; then
+        echo "Skipping SAM3 for $OBJ_ID: found $OBJECT_MASK_COUNT/$TOTAL_FRAME_COUNT masks."
+        continue
+    fi
+    if [[ -n "$OBJECT_POINTS" ]]; then
+        python run_sam3_video.py \
+            --video "$VIDEO_PATH" \
+            --points "$OBJECT_POINTS" \
+            --point_labels "$POINT_LABELS" \
+            --obj_id "$OBJ_ID" \
+            --frame_idx "$n"
+    else
+        # Preserve an SSH-forwarded DISPLAY when present; otherwise use the
+        # configured local X display for interactive clicking.
+        DISPLAY="${DISPLAY:-$SAM3_DISPLAY}" python run_sam3_video.py \
+            --video "$VIDEO_PATH" \
+            --click \
+            --obj_id "$OBJ_ID" \
+            --frame_idx "$n"
+    fi
 done
 
 echo "=== Running SAM3 video segmentation (hands, text-based) ==="
 HAND_NAME="$ANCHOR_HAND hand"
 HAND_ID="${ANCHOR_HAND}_hand_0"
-python run_sam3_video.py \
-    --video "$VIDEO_PATH" \
-    --text "$HAND_NAME" \
-    --obj_id "$HAND_ID" \
-    --frame_idx "$n"
+HAND_MASK_COUNT="$(find "$VIDEO_MASKS_DIR" -type f -name "$HAND_ID.png" | wc -l)"
+if [[ "$TOTAL_FRAME_COUNT" -gt 0 && "$HAND_MASK_COUNT" -eq "$TOTAL_FRAME_COUNT" ]]; then
+    echo "Skipping SAM3 for $HAND_ID: found $HAND_MASK_COUNT/$TOTAL_FRAME_COUNT masks."
+else
+    python run_sam3_video.py \
+        --video "$VIDEO_PATH" \
+        --text "$HAND_NAME" \
+        --obj_id "$HAND_ID" \
+        --frame_idx "$n"
+fi
 
 # ──────────────── Step 2: 3D reconstruction, pointmaps, HaWoR ────────
 echo "=== Running batch masks to meshes ==="
 conda activate "$ENV_SAM3D"
 cd "$SAM3D_DIR"                                  # overlay: generate_mesh_sam3d.py
 python generate_mesh_sam3d.py \
+    --config "$SAM3D_CONFIG" \
     --image_path "$FRAME_PATH" \
     --masks_dir "$MASKS_DIR"
 
@@ -98,10 +139,42 @@ echo "=== Computing pointmap for reference frame ==="
 python get_pointmap_dir.py --image "$FRAME_PATH" --output "$POINTMAP_PATH"
 
 echo "=== Running HaWoR ==="
-conda activate "$ENV_HAWOR"
-cd "$HAWOR_DIR"                                  # patched: demo.py
-IMG_FOCAL=$(head -n 1 "$INTRINSICS_PATH")
-python demo.py --video_path "$VIDEO_PATH" --vis_mode cam --img_focal "$IMG_FOCAL" --static_camera
+if python - "$HAND_MESHES_PATH" "$TOTAL_FRAME_COUNT" <<'PY'
+import sys
+import numpy as np
+
+path, expected_frames = sys.argv[1], int(sys.argv[2])
+try:
+    data = np.load(path, allow_pickle=False)
+    temporal_keys = (
+        "left_vertices", "left_joints", "right_vertices", "right_joints",
+        "left_trans", "right_trans", "left_valid", "right_valid",
+    )
+    valid = all(key in data and data[key].shape[0] == expected_frames for key in temporal_keys)
+except (OSError, ValueError):
+    valid = False
+raise SystemExit(0 if valid else 1)
+PY
+then
+    echo "Skipping HaWoR: found complete $TOTAL_FRAME_COUNT-frame result at $HAND_MESHES_PATH"
+else
+    if [[ ! -s "$MANO_RIGHT" || ! -s "$MANO_LEFT" ]]; then
+        echo "ERROR: HaWoR needs licensed MANO files when no complete cached result exists:" >&2
+        echo "  $MANO_RIGHT" >&2
+        echo "  $MANO_LEFT" >&2
+        exit 1
+    fi
+    conda activate "$ENV_HAWOR"
+    cd "$HAWOR_DIR"                              # patched: demo.py
+    IMG_FOCAL=$(head -n 1 "$INTRINSICS_PATH")
+    python demo.py \
+        --video_path "$VIDEO_PATH" \
+        --vis_mode cam \
+        --img_focal "$IMG_FOCAL" \
+        --checkpoint "$HAWOR_CKPT" \
+        --infiller_weight "$HAWOR_INFILLER_CKPT" \
+        --static_camera
+fi
 
 echo "=== Computing pointmaps for all frames ==="
 cd "$SCRIPTS_DIR"
@@ -117,6 +190,7 @@ echo "=== Running TAPIR velocity tracking ==="
 cd "$SCRIPTS_DIR"
 for OBJ_NAME in "${OBJECT_NAMES[@]}"; do
     OBJECT_ID="${OBJ_NAME// /_}"
+    PYTHONPATH="$TAPNET_DIR${PYTHONPATH:+:$PYTHONPATH}" \
     python tapir_velocity_tracking.py \
         --video "$VIDEO_PATH" \
         --mask-dir "$VIDEO_MASKS_DIR" \
@@ -131,7 +205,7 @@ cd "$FASTSAM3D_DIR"                              # overlay: track_object.py
 for OBJ_NAME in "${OBJECT_NAMES[@]}"; do
     OBJECT_ID="${OBJ_NAME// /_}"
     python track_object.py \
-        --config checkpoints/hf/pipeline.yaml \
+        --config "$FASTSAM3D_CONFIG" \
         --vid_dir "$VIDEO_DIR" \
         --masks_root "$VIDEO_MASKS_DIR" \
         --object_name "$OBJECT_ID" \

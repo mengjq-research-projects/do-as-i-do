@@ -26,29 +26,17 @@ reconstruction/
 
 ## Setup (one time)
 
+To prepare the complete repository from its root, use the one-shot setup entry:
+
 ```bash
-GIT_LFS_SKIP_SMUDGE=1 git clone --recurse-submodules https://github.com/malik-group/do-as-i-do.git
-cd do-as-i-do/reconstruction
-./setup/00_init_submodules.sh                 # only needed if you didn't clone with recursive submodules
-./setup/01_create_envs.sh                     # FALLBACK build of all 4 envs (sam3, sam3d, hawor, tapnet) — prefer each fork's own setup, see "Setting up the conda envs" below
-./setup/02_fetch_weights.sh --download        # fetch weights (needs hf auth)
+cd do-as-i-do
+./setup_all.sh --managed-offline
 ```
-**Setting up the conda envs.** The recommended route is to build each env by following
-its fork's own setup instructions (the repos vendored under `modules/`):
 
-- `sam3`  → [malik-group/sam3](https://github.com/malik-group/sam3) (`modules/sam3`)
-- `sam3d` → [malik-group/sam-3d-objects](https://github.com/malik-group/sam-3d-objects) (`modules/sam-3d-objects`, see its `doc/setup.md`) 
-- `hawor` → [malik-group/HaWoR](https://github.com/malik-group/HaWoR) (`modules/HaWoR`)
-- `tapnet` → [malik-group/tapnet](https://github.com/malik-group/tapnet) (`modules/tapnet`)
-
-See [`env/README.md`](env/README.md) for the per-env cu128 recipes (or `./setup/01_create_envs.sh` to script them).
-
-After the `sam3d` env is built, two manual Stage-2 steps are needed: un-shadow the repo's
-`notebook/` package (`pip uninstall -y notebook`) and build the Mip-Splatting
-`diff_gaussian_rasterization` for the renderer's `inria` backend. Commands in
-[`env/README.md`](env/README.md).
-
-Review `config/paths.sh`.
+This restores and verifies all four Reconstruction environments, model weights,
+offline sources, Retargeting, and Isaac. It also prepares the runtime links, so
+no additional setup command is required. MANO remains a separately licensed
+manual asset. See [`../ENVIRONMENT.md`](../ENVIRONMENT.md).
 
 
 ## Run
@@ -99,11 +87,10 @@ ffmpeg -i "$VIDEO_DIR/whisking.mp4" -vsync 0 -start_number 0 "$VIDEO_DIR/all_fra
 Then launch the viewer:
 
 ```bash
-conda activate sam3d
 VIDEO_DIR=whisking
 OBJECT_ID=whisk
 LAYOUT_JSON_OPT="$VIDEO_DIR/obj_tracking_out/$OBJECT_ID/combined_visualization/layout_camera_frame_optimized.json"
-python scripts/visualize_3d.py \
+./run_visualize.sh \
     --frames-dir "$VIDEO_DIR/all_frames" \
     --layout-json "$LAYOUT_JSON_OPT" \
     --mesh "$VIDEO_DIR/video_segmentation/masks/frame_000125_masks/$OBJECT_ID/$OBJECT_ID.obj" \
@@ -126,4 +113,3 @@ acknowledge the original authors.
 | `malik-group/HaWoR`          | ThunderVVV/HaWoR @ `de90272`                | `2c3fa0c` | CC BY-NC-ND 4.0 |
 | `malik-group/tapnet`         | google-deepmind/tapnet @ `96d3f84`          | `f2f8888` | Apache-2.0 |
 | `malik-group/sam3`           | facebookresearch/sam3 @ `757bbb0`           | `b8e18f5` | SAM License (Meta) |
-

@@ -24,8 +24,8 @@ The Sharpa Wave hand SDK is proprietary and not shipped — drop it into
 ## 1. mujoco_replay (sim → trajectory)
 
 ```bash
-cd mujoco_replay
-python replay_retarget.py --side left --traj /path/to/trajectory_mjwp.npz
+./deployment/run_pipeline.sh mujoco-replay \
+  --side left --traj /path/to/trajectory_mjwp.npz
 ```
 
 Opens a viser web GUI at the printed URL. Tune the workspace placement
@@ -44,10 +44,10 @@ demo) without re-running anything. The right-arm workspace preset already defaul
 to this clip's saved placement, so it comes up positioned in front of the arm:
 
 ```bash
-# from deployment/mujoco_replay — right arm + Sharpa hand, 0.25x playback
-python replay_retarget.py \
+# From the repository root — right arm + Sharpa hand, 0.25x playback
+./deployment/run_pipeline.sh mujoco-replay \
     --side right \
-    --traj ../../retargeting/outputs/sharpa/right/whisking/0/trajectory_mjwp.npz \
+    --traj retargeting/outputs/sharpa/right/whisking/0/trajectory_mjwp.npz \
     --speed 0.25
 ```
 
@@ -58,30 +58,31 @@ and **Save retarget** as usual.
 Headless solve (no GUI) to check IK residuals / collision clearance:
 
 ```bash
-python replay_retarget.py --side left --traj .../trajectory_mjwp.npz --solve-only
+./deployment/run_pipeline.sh mujoco-replay \
+  --side left --traj .../trajectory_mjwp.npz --solve-only
 ```
 
 ## 2. robot_replay (trajectory → hardware)
 
 ```bash
-cd robot_replay
-cp config.example.yaml config.yaml        # then edit arm_ip / hand_sn
+cp deployment/robot_replay/config.example.yaml \
+  deployment/robot_replay/config.yaml     # then edit arm_ip / hand_sn
 
-python run_npz.py --side left trajectory_dual_ur3e.npz             # arm only, real-time
-python run_npz.py --side left trajectory_dual_ur3e.npz --both      # arm + hand
-python run_npz.py --side left trajectory_dual_ur3e.npz --speed 0.5 # half speed
-python run_npz.py --side left trajectory_dual_ur3e.npz --dry-run   # validate, no hardware
+./deployment/run_pipeline.sh robot-replay --side left trajectory_dual_ur3e.npz
+./deployment/run_pipeline.sh robot-replay --side left trajectory_dual_ur3e.npz --both
+./deployment/run_pipeline.sh robot-replay --side left trajectory_dual_ur3e.npz --speed 0.5
+./deployment/run_pipeline.sh robot-replay --side left trajectory_dual_ur3e.npz --dry-run
 ```
 
 The script connects, homes, moves to the trajectory start, then waits for Enter
 before streaming. Home a robot independently with:
 
 ```bash
-python home.py --side left            # arm + hand
-python home.py --side right --arm-only
+./deployment/run_pipeline.sh home --side left
+./deployment/run_pipeline.sh home --side right --arm-only
 ```
 
 ## Safety
 
-`run_npz.py` and `home.py` command real hardware. Verify the home pose, keep an
-e-stop in reach, and start with `--dry-run` then a low `--speed`.
+The `robot-replay` and `home` actions command real hardware. Verify the home
+pose, keep an e-stop in reach, and start with `--dry-run` then a low `--speed`.
