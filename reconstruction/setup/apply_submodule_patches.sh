@@ -31,9 +31,6 @@ apply_patch_once() {
 }
 
 apply_patch_once \
-    "$ROOT/modules/Fast-SAM3D" \
-    "$PATCH_ROOT/Fast-SAM3D.patch"
-apply_patch_once \
     "$ROOT/modules/HaWoR" \
     "$PATCH_ROOT/HaWoR.patch"
 apply_patch_once \
