@@ -302,6 +302,8 @@ run_managed() {
 }
 
 setup_managed_offline() {
+    local managed_mano_dir="$MANAGED_PACKAGE_ROOT/releases/$MANAGED_RELEASE/assets/licensed/mano"
+    local managed_mano_summary
     select_manager_python
     log "Using managed offline release: $MANAGED_PACKAGE_ROOT/releases/$MANAGED_RELEASE"
     echo "    = No GitHub, PyPI, Hugging Face, or NVIDIA requests are permitted."
@@ -366,6 +368,18 @@ setup_managed_offline() {
         run_managed verify-installed-venvs "${venv_selection[@]}"
     fi
 
+    log "Checking user-provided licensed MANO assets"
+    if [[ -s "$managed_mano_dir/MANO_LEFT.pkl" && \
+          -s "$managed_mano_dir/MANO_RIGHT.pkl" ]]; then
+        echo "MANO_LEFT.pkl: PASS ($managed_mano_dir/MANO_LEFT.pkl)"
+        echo "MANO_RIGHT.pkl: PASS ($managed_mano_dir/MANO_RIGHT.pkl)"
+        managed_mano_summary="MANO: available from the user-provided licensed asset directory."
+    else
+        echo "MANO: not installed (required only for uncached HaWoR reconstruction)."
+        echo "Install both licensed files under: $managed_mano_dir"
+        managed_mano_summary="MANO: manual licensed asset not installed; cached demos can still run."
+    fi
+
     log "Managed offline setup complete"
     cat <<EOF
 Managed release: $MANAGED_PACKAGE_ROOT/releases/$MANAGED_RELEASE
@@ -373,8 +387,8 @@ Managed release: $MANAGED_PACKAGE_ROOT/releases/$MANAGED_RELEASE
 Activate convenient interpreter variables in the current shell:
   source dependency_management/activate.sh
 
-MANO remains a separately licensed manual asset. Existing repo-local
-environments were not modified or removed.
+$managed_mano_summary
+Existing repo-local environments were not modified or removed.
 EOF
 }
 

@@ -49,7 +49,7 @@ printf '%s\n' "$ENV_SAM3" "$ENV_SAM3D" "$RETARGETING_PYTHON" "$ISAAC_PYTHON"
 - 版本化依赖根目录：`/data/jiaqimeng/retargeting_dev`
 - 当前发布：`releases/2026.08-a100`，由 `current` 符号链接选中
 - MANO：受许可证限制，必须由获授权的使用者手动提供
-- Sharpa Wave SDK 和真实机器人配置：只在 Deployment 阶段需要
+- 当前项目范围结束于 Isaac，不需要 Sharpa Wave SDK、真实机器人配置或 Deployment 环境
 - GitHub 操作和新资源下载：由本地跳板机负责，不在远端一键安装中执行
 
 ## 维护与排错

@@ -4,7 +4,7 @@
 
 [**Project Page**](https://do-as-i-do.com/) | [**arXiv**](https://arxiv.org/abs/2606.19333) 
 
-这是 Do as I Do 的代码发布版本：从单段手物交互演示视频出发，先重建物体与手部运动，再将该运动重定向到机器人手。重定向结果可以进入两个相互独立的下游方向：导出为 Isaac Sim 运动学回放数据，或适配到双 UR3e 机械臂和 Sharpa Wave 灵巧手进行 MuJoCo / 真实硬件回放。
+这是 Do as I Do 的代码发布版本：从单段手物交互演示视频出发，先重建物体与手部运动，再将该运动重定向到机器人手，并导出为 Isaac Sim 运动学回放数据。当前项目验收范围结束于 Isaac；仓库中的 `deployment/` 仅作为可选历史模块保留，不属于新人安装或当前运行链路。
 
 ## 流程概览
 
@@ -56,7 +56,8 @@ source dependency_management/activate.sh
 1. 使用 [`reconstruction/run_pipeline.sh`](reconstruction/run_pipeline.sh) 从视频执行重建。
 2. 使用 [`retargeting/run_pipeline.sh`](retargeting/run_pipeline.sh) 将结果重定向到机器人手。
 3. 使用 [`isaac_export/run_pipeline.sh`](isaac_export/run_pipeline.sh) 生成 Isaac Level A 标准轨迹和自动检查报告。
-4. 或使用 [`deployment/`](deployment/README.md) 下的工具进行 MuJoCo 预览和真实硬件部署。
+
+`deployment/` 不属于当前项目范围，不需要安装其 Conda 环境、Sharpa Wave SDK、UR3e 配置或真实机器人网络。
 
 ## 环境概览
 
@@ -184,7 +185,7 @@ cd retargeting
 - **Hugging Face 权限**：只有发布维护者刷新受控权重时需要；新人离线启动不需要。
 - **MANO 资源**：HaWoR 处理没有缓存的新视频时依赖 `MANO_LEFT.pkl` 和 `MANO_RIGHT.pkl`；许可证要求获授权用户手动安装到 `current/assets/licensed/mano/`，不得提交到 Git。
 - **Isaac Sim**：只在生成 USD、执行 Isaac 运动学回放和渲染时需要；标准轨迹与质量报告导出不依赖 Isaac Sim。
-- **Sharpa Wave SDK**：仅 `deployment/robot_replay/` 需要，仓库中不附带该 SDK。
+- **Sharpa Wave SDK**：当前项目不做真机部署，因此完全不需要安装；它只与保留的可选 `deployment/robot_replay/` 模块有关。
 
 关于各环境对应的命令、精确依赖版本和安装取舍，请结合 [`ENVIRONMENT.md`](ENVIRONMENT.md) 以及上面链接到的各阶段文档一起查看。
 
