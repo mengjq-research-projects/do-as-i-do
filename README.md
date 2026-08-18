@@ -92,10 +92,10 @@ source dependency_management/activate.sh
 
 ```bash
 cd reconstruction
-./run_pipeline.sh whisking/whisking.mp4 125 whisk right
+./run_pipeline.sh whisking/whisking.mp4 125 whisk right "584,529" "1"
 ```
 
-该流程会在四个专用 Conda 环境之间切换：`sam3`、`sam3d`、`hawor`、`tapnet`。输出的物体轨迹和手部重建结果会写回到视频对应目录下。完整安装说明见 [`reconstruction/README.md`](reconstruction/README.md)。
+其中 `584,529` 是参考帧 125 中 whisk 内部的正样本像素坐标，`1` 表示正样本。该命令不需要 GUI 或 X Server，适合远端无显示器服务器。流程会在四个专用 Conda 环境之间切换：`sam3`、`sam3d`、`hawor`、`tapnet`。输出的物体轨迹和手部重建结果会写回到视频对应目录下。完整安装说明见 [`reconstruction/README.md`](reconstruction/README.md)。
 
 ### 重定向
 

@@ -44,16 +44,14 @@ manual asset. See [`../ENVIRONMENT.md`](../ENVIRONMENT.md).
 
 ```bash
 ./run_pipeline.sh VIDEO_PATH [FRAME_N] [OBJECT] [ANCHOR_HAND] [OBJECT_POINTS] [POINT_LABELS]
-# e.g.
-./run_pipeline.sh whisking/whisking.mp4 125 whisk right
-```
-
-Headless equivalent for the bundled whisking example (a positive point inside
-the whisk on frame 125):
-
-```bash
+# Bundled headless example: positive point inside the whisk on frame 125.
 ./run_pipeline.sh whisking/whisking.mp4 125 whisk right "584,529" "1"
 ```
+
+`584,529` is the object point in pixel coordinates and `1` marks it as a
+positive point. This is the default documented path because it works without a
+GUI or X server. Interactive clicking remains available when a working
+`DISPLAY` is explicitly configured.
 
 ### Details on Pipeline Stages
 | # | stage | script | env |
