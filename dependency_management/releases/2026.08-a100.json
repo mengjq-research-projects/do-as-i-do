@@ -139,7 +139,7 @@
   "submodules": {
     "reconstruction/modules/Fast-SAM3D": "0aa377f034a5f8cb9d0ffa8d872300652144a9f5",
     "reconstruction/modules/HaWoR": "2c3fa0c06e54a1b192c1ff692eaa89d526cd6317",
-    "reconstruction/modules/sam-3d-objects": "875b010016f4c86936985b74ffcd7230e6979d02",
+    "reconstruction/modules/sam-3d-objects": "9d760ebf014845bbd09b7fa7b3dd0d5bd83a71af",
     "reconstruction/modules/sam3": "b8e18f5f021fb27c4f6eeb1a8f4ecfa3fa0bec39",
     "reconstruction/modules/tapnet": "f2f8888a803051ea42cd79c89cfca6c25dfeae77"
   },

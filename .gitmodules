@@ -3,7 +3,7 @@
 	url = https://github.com/malik-group/tapnet.git
 [submodule "reconstruction/modules/sam-3d-objects"]
 	path = reconstruction/modules/sam-3d-objects
-	url = https://github.com/malik-group/sam-3d-objects.git
+	url = https://github.com/mengjq-research-projects/sam-3d-objects.git
 [submodule "reconstruction/modules/Fast-SAM3D"]
 	path = reconstruction/modules/Fast-SAM3D
 	url = https://github.com/mengjq-research-projects/Fast-SAM3D.git

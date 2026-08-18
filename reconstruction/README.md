@@ -165,7 +165,7 @@ acknowledge the original authors.
 
 | fork | upstream @ pinned commit | fork commit | license |
 |---|---|---|---|
-| `malik-group/sam-3d-objects` | facebookresearch/sam-3d-objects @ `81a8237` | `875b010` | SAM License (Meta) |
+| `mengjq-research-projects/sam-3d-objects` | malik-group/sam-3d-objects @ `875b010` | `9d760eb` | SAM License (Meta) |
 | `mengjq-research-projects/Fast-SAM3D` | malik-group/Fast-SAM3D @ `823d478` | `0aa377f` | MIT (+ embedded SAM-3D under SAM License) |
 | `malik-group/HaWoR`          | ThunderVVV/HaWoR @ `de90272`                | `2c3fa0c` | CC BY-NC-ND 4.0 |
 | `malik-group/tapnet`         | google-deepmind/tapnet @ `96d3f84`          | `f2f8888` | Apache-2.0 |

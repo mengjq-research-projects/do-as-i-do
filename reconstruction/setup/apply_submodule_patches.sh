@@ -34,9 +34,6 @@ apply_patch_once \
     "$ROOT/modules/HaWoR" \
     "$PATCH_ROOT/HaWoR.patch"
 apply_patch_once \
-    "$ROOT/modules/sam-3d-objects" \
-    "$PATCH_ROOT/sam-3d-objects.patch"
-apply_patch_once \
     "$ROOT/modules/HaWoR/thirdparty/DROID-SLAM/thirdparty/lietorch" \
     "$PATCH_ROOT/lietorch.patch"
 
