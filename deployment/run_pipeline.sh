@@ -3,6 +3,13 @@
 set -Eeuo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PACKAGE_ROOT="${DO_AS_I_DO_PACKAGE_ROOT:-/data/jiaqimeng/retargeting_dev}"
+RELEASE="${DO_AS_I_DO_RELEASE:-current}"
+if [[ "$RELEASE" = /* ]]; then
+    RELEASE_DIR="$RELEASE"
+else
+    RELEASE_DIR="${DO_AS_I_DO_RELEASE_DIR:-$PACKAGE_ROOT/$RELEASE}"
+fi
 
 case "${1:-}" in
     mujoco-replay)
@@ -38,6 +45,20 @@ esac
 
 PYTHON_CANDIDATES=(
     "${DEPLOYMENT_PYTHON:-}"
+)
+
+# The simulation-only preview uses the same public Python dependencies as
+# Retargeting, so the managed offline Retargeting venv is sufficient.  Keep
+# the proprietary real-hardware actions on the dedicated Deployment env.
+if [[ "$ACTION" == "mujoco-replay" ]]; then
+    PYTHON_CANDIDATES+=(
+        "${RETARGETING_PYTHON:-}"
+        "${RETARGETING_VENV:+${RETARGETING_VENV}/bin/python}"
+        "$RELEASE_DIR/installed-envs/venv/retargeting/bin/python"
+    )
+fi
+
+PYTHON_CANDIDATES+=(
     "/home/jiaqimeng/miniforge3/envs/deployment/bin/python"
     "$HOME/miniforge3/envs/deployment/bin/python"
     "$HOME/miniconda3/envs/deployment/bin/python"
@@ -53,9 +74,17 @@ for candidate in "${PYTHON_CANDIDATES[@]}"; do
     fi
 done
 
-cat >&2 <<'EOF'
+if [[ "$ACTION" == "mujoco-replay" ]]; then
+    cat >&2 <<'EOF'
+Managed Retargeting Python environment was not found.
+Restore it from the repository root:
+  ./setup_all.sh --managed-offline
+EOF
+else
+    cat >&2 <<'EOF'
 Deployment Python environment was not found.
 Create it first from the repository root:
   ./setup_all.sh --with-deployment
 EOF
+fi
 exit 1

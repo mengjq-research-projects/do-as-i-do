@@ -185,11 +185,15 @@ cd "$(git rev-parse --show-toplevel)"
 在 MuJoCo / viser 中预览仓库内附带的 retargeting 结果：
 
 ```bash
+cd "$(git rev-parse --show-toplevel)"
 ./deployment/run_pipeline.sh mujoco-replay \
     --side right \
     --traj retargeting/outputs/sharpa/right/whisking/0/trajectory_mjwp.npz \
     --speed 0.25
 ```
+
+`mujoco-replay` 会自动复用一键离线安装创建的托管 Retargeting 环境，不需要
+额外创建 Deployment 环境。
 
 真实硬件回放位于 `deployment/robot_replay/`，需要 UR3e 场地配置和 Sharpa Wave SDK。完整说明见 [`deployment/README.md`](deployment/README.md)。
 

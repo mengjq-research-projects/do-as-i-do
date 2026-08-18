@@ -12,6 +12,17 @@ Run a retargeted demo on the real robot. Two stages:
 
 ## Setup
 
+The simulation-only `mujoco-replay` action reuses the managed Retargeting
+environment restored by the standard offline setup:
+
+```bash
+./setup_all.sh --managed-offline
+```
+
+No separate Deployment environment is required for that action. Real-hardware
+`robot-replay` and `home` additionally require the optional Deployment Conda
+environment and proprietary Sharpa Wave SDK:
+
 ```bash
 conda env create -f env/deployment.yml   # see env/README.md
 conda activate deployment
