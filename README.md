@@ -97,6 +97,38 @@ cd reconstruction
 
 其中 `584,529` 是参考帧 125 中 whisk 内部的正样本像素坐标，`1` 表示正样本。该命令不需要 GUI 或 X Server，适合远端无显示器服务器。流程会在四个专用 Conda 环境之间切换：`sam3`、`sam3d`、`hawor`、`tapnet`。输出的物体轨迹和手部重建结果会写回到视频对应目录下。完整安装说明见 [`reconstruction/README.md`](reconstruction/README.md)。
 
+#### 处理全新视频
+
+运行数据放在 Git 仓库之外；下面以杯子任务为例：
+
+```bash
+cd ~/projects/do-as-i-do
+source dependency_management/activate.sh
+
+mkdir -p /data/jiaqimeng/do-as-i-do-runs/cup_demo
+cp /path/to/my_demo.mp4 /data/jiaqimeng/do-as-i-do-runs/cup_demo/input.mp4
+
+VIDEO=/data/jiaqimeng/do-as-i-do-runs/cup_demo/input.mp4
+FRAME_N=100  # 从 0 开始计数，选择手和物体都清楚可见的一帧
+
+# 先导出参考帧，用 VS Code Remote 或复制到本机查看像素坐标。
+"$ENV_SAM3/bin/ffmpeg" -y -i "$VIDEO" \
+  -vf "select=eq(n\,${FRAME_N})" \
+  -frames:v 1 -update 1 \
+  /data/jiaqimeng/do-as-i-do-runs/cup_demo/reference.png
+```
+
+在 `reference.png` 中选取物体内部一点，例如 `(620,410)`，然后执行：
+
+```bash
+cd ~/projects/do-as-i-do/reconstruction
+./run_pipeline.sh \
+  /data/jiaqimeng/do-as-i-do-runs/cup_demo/input.mp4 \
+  100 cup right "620,410" "1"
+```
+
+最后两个参数分别是分号分隔的像素坐标和标签；`1` 是物体内部正样本，`0` 是排除区域。例如 `"620,410;80,80" "1;0"`。输出会写到输入视频所在目录。当前高质量 Fast-SAM3D 配置每帧进行 25 个姿态采样和 render-compare；在 A100 上，约 138 帧的视频通常需要 1.5–2 小时完成该阶段，时长随帧数近似线性增加。当前 Stage 3 不支持从中间帧自动续跑，因此运行期间不要中断。
+
 ### 重定向
 
 主入口：
@@ -150,7 +182,7 @@ cd retargeting
 
 - **子模块**：`reconstruction/modules/` 是 reconstruction 流程所必需的。
 - **Hugging Face 权限**：只有发布维护者刷新受控权重时需要；新人离线启动不需要。
-- **MANO 资源**：HaWoR 依赖该资源。
+- **MANO 资源**：HaWoR 处理没有缓存的新视频时依赖 `MANO_LEFT.pkl` 和 `MANO_RIGHT.pkl`；许可证要求获授权用户手动安装到 `current/assets/licensed/mano/`，不得提交到 Git。
 - **Isaac Sim**：只在生成 USD、执行 Isaac 运动学回放和渲染时需要；标准轨迹与质量报告导出不依赖 Isaac Sim。
 - **Sharpa Wave SDK**：仅 `deployment/robot_replay/` 需要，仓库中不附带该 SDK。
 

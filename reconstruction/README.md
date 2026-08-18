@@ -53,6 +53,54 @@ positive point. This is the default documented path because it works without a
 GUI or X server. Interactive clicking remains available when a working
 `DISPLAY` is explicitly configured.
 
+### A new video from scratch
+
+Keep generated datasets outside the Git checkout. From the repository root:
+
+```bash
+source dependency_management/activate.sh
+mkdir -p /data/jiaqimeng/do-as-i-do-runs/cup_demo
+cp /path/to/my_demo.mp4 /data/jiaqimeng/do-as-i-do-runs/cup_demo/input.mp4
+
+VIDEO=/data/jiaqimeng/do-as-i-do-runs/cup_demo/input.mp4
+FRAME_N=100  # zero-based; choose a clear frame containing the hand and object
+
+"$ENV_SAM3/bin/ffmpeg" -y -i "$VIDEO" \
+  -vf "select=eq(n\,${FRAME_N})" \
+  -frames:v 1 -update 1 \
+  /data/jiaqimeng/do-as-i-do-runs/cup_demo/reference.png
+```
+
+Open `reference.png` through VS Code Remote or copy it to a local image viewer,
+then choose a pixel inside the object. Run the pipeline with that point:
+
+```bash
+cd ~/projects/do-as-i-do/reconstruction
+./run_pipeline.sh \
+  /data/jiaqimeng/do-as-i-do-runs/cup_demo/input.mp4 \
+  100 cup right "620,410" "1"
+```
+
+Frame indices are zero-based. Coordinates and labels are semicolon-separated;
+label `1` is a positive object point and `0` excludes an area, for example
+`"620,410;80,80" "1;0"`. Pick a reference frame with a sharp, visible object,
+a visible anchor hand, and as little occlusion as possible. Avoid cuts and large
+camera motion because the current HaWoR invocation assumes a static camera.
+
+The high-quality Fast-SAM3D stage evaluates 25 pose samples and a render-compare
+optimization for every frame. On the current A100, a roughly 138-frame clip
+normally spends 1.5--2 hours in this stage, scaling approximately linearly with
+the number of frames. Stage 3 does not currently resume from a partial frame;
+do not interrupt it. Complete SAM3 masks and HaWoR results are reused on a
+rerun, but later tracking stages are recomputed.
+
+For an uncached video, HaWoR also requires licensed `MANO_LEFT.pkl` and
+`MANO_RIGHT.pkl` files. An authorized user installs them outside Git at:
+
+```text
+/data/jiaqimeng/retargeting_dev/current/assets/licensed/mano/
+```
+
 ### Details on Pipeline Stages
 | # | stage | script | env |
 |---|---|---|---|
