@@ -140,14 +140,21 @@ cd retargeting
 ```
 
 该阶段读取 reconstruction 的输出，构建 MuJoCo 场景、求解 IK，并执行 MuJoCo Warp 物理优化。完整安装说明见 [`retargeting/README.md`](retargeting/README.md)。
+看到 `Saved info to .../trajectory_mjwp.npz`、最终 tracking error 和
+`Optimization complete` 后，结果已经完整保存；如果 Viser 继续保持服务，
+此时可以安全按 `Ctrl+C` 返回终端。
 
 ### Isaac Level A 导出
 
 仓库附带的 whisking 结果可以直接转换，不需要重新运行 Reconstruction 或 Retargeting：
 
 ```bash
+cd "$(git rev-parse --show-toplevel)"
 ./isaac_export/run_pipeline.sh export
 ```
+
+该入口使用相对于仓库根目录的默认输入和输出路径，因此不要在
+`reconstruction/` 或 `retargeting/` 目录中以 `./isaac_export/...` 调用。
 
 默认读取 `retargeting/outputs/sharpa/right/whisking/0/`，跳过 MJWP warmup，并输出到 `isaac_export/outputs/whisking/`：
 
@@ -159,12 +166,19 @@ cd retargeting
 导出其他右手 Sharpa 任务时只需要更换运行目录：
 
 ```bash
+cd "$(git rev-parse --show-toplevel)"
 ./isaac_export/run_pipeline.sh export \
     --run-dir retargeting/outputs/sharpa/right/<task>/<id> \
     --output-dir isaac_export/outputs/<task>
 ```
 
-当前层级 A 已完成与 Isaac 无关的标准数据边界。生成 `sharpa_right.usd`、`object.usd`、`scene.usd`、回放视频和关键帧截图仍需安装包含 `isaacsim`、`omni.usd` 和 `pxr` 的 Isaac Sim 运行环境。详细协议和当前边界见 [`isaac_export/README.md`](isaac_export/README.md)。
+当前层级 A 已完成与 Isaac 无关的标准数据边界。`environment_report.json`
+是在启动 Isaac App 之前生成的；某些 wheel 安装中，`omni.usd` 只有在
+`SimulationApp` 启动后才进入模块路径，因此报告可能显示
+`Isaac environment: unavailable`，即使 `isaacsim` 和 `pxr` 已安装。
+这不影响标准导出，实际 USD 能力以 `build-usd` 命令为准。生成
+`scene.usd`、回放视频和关键帧截图仍需要完整 Isaac Sim 环境。详细命令和
+当前边界见 [`isaac_export/README.md`](isaac_export/README.md)。
 
 ### 部署
 

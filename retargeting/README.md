@@ -75,6 +75,10 @@ cd ~/projects/do-as-i-do
 - `outputs/{robot}/{hand}/{task}/0/trajectory_kinematic.npz`：IK 轨迹（阶段 4）
 - `outputs/{robot}/{hand}/{task}/0/trajectory_mjwp.npz` 与 `config.yaml`：优化后的轨迹，以及本次运行解析后的配置（阶段 5）；逐步 tracking error 指标也会存储在 `.npz` 中
 
+当终端显示 `Saved info to .../trajectory_mjwp.npz`、最终 tracking error 和
+`Optimization complete` 时，优化结果已经完整保存。如果 Viser 随后继续保持
+服务，可以安全按 `Ctrl+C` 结束服务器并返回终端。
+
 ## 可视化一个已完成的重定向轨迹
 
 `replay_viser.py` 可以在交互式 [viser](https://github.com/nerfstudio-project/viser) viewer 中回放一个已经完成的结果，**不会重新执行优化**。它直接复用了流水线中的 `retargeting.utils.viser_viewer`，并最多叠加三层已经对齐的可视化内容，每一层都可以在 GUI 中单独开关：

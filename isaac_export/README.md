@@ -18,13 +18,19 @@ The current implementation completes the Isaac-independent data boundary:
 From the repository root:
 
 ```bash
+cd "$(git rev-parse --show-toplevel)"
 ./isaac_export/run_pipeline.sh export
 ```
+
+The default input and output paths are repository-root-relative. If your shell
+is currently in `reconstruction/` or `retargeting/`, return to the repository
+root before running this command.
 
 The output is written to `isaac_export/outputs/whisking/`. To export another
 Retargeting result without changing code:
 
 ```bash
+cd "$(git rev-parse --show-toplevel)"
 ./isaac_export/run_pipeline.sh export \
   --run-dir retargeting/outputs/sharpa/right/<task>/<id> \
   --output-dir isaac_export/outputs/<task>
@@ -34,6 +40,14 @@ Warmup frames are skipped by default. Use `--include-warmup` to retain them;
 they are then marked `false` in `valid_mask`. Use `--trajectory
 trajectory_kinematic.npz` for an IK comparison export. Its own `frequency`
 field defines timestamps and MJWP warmup settings are not applied.
+
+`environment_report.json` is produced before an Isaac application is started.
+With some wheel-based Isaac Sim installations, `omni.usd` becomes importable
+only after `SimulationApp` initializes. Consequently, the standard export can
+print `Isaac environment: unavailable` even when the report already finds both
+`isaacsim` and `pxr`. This does not invalidate `trajectory.npz` or its quality
+report. Use the `build-usd` command below as the authoritative end-to-end Isaac
+capability check.
 
 ## Canonical trajectory protocol
 
@@ -73,7 +87,7 @@ interactive prompt yourself; the setup script deliberately does not accept it
 on your behalf. Then generate the scene on the remote host:
 
 ```bash
-cd ~/projects/do-as-i-do
+cd "$(git rev-parse --show-toplevel)"
 
 ./isaac_export/run_pipeline.sh build-usd \
   --package-dir isaac_export/outputs/whisking \
