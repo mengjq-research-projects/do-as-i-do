@@ -21,8 +21,9 @@ reconstruction/
 - An NVIDIA GPU with ≥ 32 GB VRAM.
 - HuggingFace auth with access to the repos `facebook/sam-3d-objects` and `facebook/sam3`; Plus a MANO download
   (https://mano.is.tue.mpg.de) for HaWoR.
-- SAM 3 segmentation is implemented with a click-based GUI needing an X display
-  (`config/paths.sh` sets `SAM3_DISPLAY=:1`; on a headless host, use forwarding or try text based prompting).
+- Interactive SAM3 clicking requires a working X server and `DISPLAY`. On a
+  headless server, pass pixel coordinates as the fifth argument instead; this
+  avoids any GUI requirement.
 
 ## Setup (one time)
 
@@ -42,9 +43,16 @@ manual asset. See [`../ENVIRONMENT.md`](../ENVIRONMENT.md).
 ## Run
 
 ```bash
-./run_pipeline.sh VIDEO_PATH [FRAME_N] [OBJECT] [ANCHOR_HAND]
+./run_pipeline.sh VIDEO_PATH [FRAME_N] [OBJECT] [ANCHOR_HAND] [OBJECT_POINTS] [POINT_LABELS]
 # e.g.
 ./run_pipeline.sh whisking/whisking.mp4 125 whisk right
+```
+
+Headless equivalent for the bundled whisking example (a positive point inside
+the whisk on frame 125):
+
+```bash
+./run_pipeline.sh whisking/whisking.mp4 125 whisk right "584,529" "1"
 ```
 
 ### Details on Pipeline Stages

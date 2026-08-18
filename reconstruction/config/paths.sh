@@ -112,5 +112,7 @@ unset -f _prefer_managed_dir _prefer_managed_file _prefer_managed_env
 
 # ── Host / GPU ──
 export CUDA_VISIBLE_DEVICES=0
-# X display used by the click-based SAM3 segmentation UI (Stage 1).
-export SAM3_DISPLAY=:1
+# Optional X display used by the click-based SAM3 segmentation UI (Stage 1).
+# Do not invent a display on headless hosts: pass point coordinates to
+# run_pipeline.sh or explicitly export DISPLAY/SAM3_DISPLAY after configuring X.
+export SAM3_DISPLAY="${SAM3_DISPLAY:-}"

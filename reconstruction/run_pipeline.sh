@@ -101,9 +101,19 @@ for OBJ_NAME in "${OBJECT_NAMES[@]}"; do
             --obj_id "$OBJ_ID" \
             --frame_idx "$n"
     else
-        # Preserve an SSH-forwarded DISPLAY when present; otherwise use the
-        # configured local X display for interactive clicking.
-        DISPLAY="${DISPLAY:-$SAM3_DISPLAY}" python run_sam3_video.py \
+        INTERACTIVE_DISPLAY="${DISPLAY:-${SAM3_DISPLAY:-}}"
+        if [[ -z "$INTERACTIVE_DISPLAY" ]] || \
+           { command -v xdpyinfo >/dev/null 2>&1 && \
+             ! DISPLAY="$INTERACTIVE_DISPLAY" xdpyinfo >/dev/null 2>&1; }; then
+            echo "ERROR: SAM3 interactive clicking needs a working X display" \
+                 "(received '${INTERACTIVE_DISPLAY:-<unset>}')." >&2
+            echo "This host is headless. Pass object point coordinates instead:" >&2
+            echo "  ./run_pipeline.sh '$VIDEO_PATH' '$n' '$OBJ_NAME' '$ANCHOR_HAND' 'X,Y' '1'" >&2
+            echo "Multiple points use 'x1,y1;x2,y2' with labels such as '1;0'." >&2
+            echo "Reference frame for choosing pixels: $FRAME_PATH" >&2
+            exit 1
+        fi
+        DISPLAY="$INTERACTIVE_DISPLAY" python run_sam3_video.py \
             --video "$VIDEO_PATH" \
             --click \
             --obj_id "$OBJ_ID" \
