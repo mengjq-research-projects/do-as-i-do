@@ -811,7 +811,9 @@ def venv_identity(manifest: dict, entry: dict) -> dict:
     identity = {
         "inputs": project_input_hashes(entry),
         "name": entry["name"],
-        "project": str((HERE.parent / entry["project"]).resolve()),
+        # Environment identity must be independent of the Git checkout path.
+        # The input hashes below already bind it to the exact project files.
+        "project": entry["project"],
         "python": entry["python"],
         "uv_version": python_tooling(manifest)["uv_version"],
     }
@@ -822,6 +824,42 @@ def venv_identity(manifest: dict, entry: dict) -> dict:
 
 def venv_marker_path(target: Path) -> Path:
     return target / ".do-as-i-do-env.json"
+
+
+def venv_marker_matches(marker: dict, identity: dict) -> bool:
+    actual = marker.get("identity")
+    if not isinstance(actual, dict):
+        return False
+    if actual == identity:
+        return True
+
+    # Releases created before checkout-independent identities stored an
+    # absolute source path. Accept it only when every other field matches and
+    # its final path component is the expected logical project directory.
+    legacy = actual.copy()
+    legacy_project = legacy.get("project")
+    expected_project = identity.get("project")
+    if not isinstance(legacy_project, str) or not isinstance(
+        expected_project, str
+    ):
+        return False
+    if not Path(legacy_project).is_absolute():
+        return False
+    if Path(legacy_project).name != Path(expected_project).name:
+        return False
+    legacy["project"] = expected_project
+    return legacy == identity
+
+
+def migrate_venv_marker(marker_path: Path, marker: dict, identity: dict) -> None:
+    if marker.get("identity") == identity:
+        return
+    marker["identity"] = identity
+    marker["metadata_migrated_at"] = datetime.now(timezone.utc).isoformat()
+    marker_path.write_text(
+        json.dumps(marker, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def install_venv_environments(
@@ -838,7 +876,8 @@ def install_venv_environments(
         identity = venv_identity(manifest, entry)
         if marker_path.is_file():
             marker = json.loads(marker_path.read_text(encoding="utf-8"))
-            if marker.get("identity") == identity:
+            if venv_marker_matches(marker, identity):
+                migrate_venv_marker(marker_path, marker, identity)
                 print(f"Already installed: {entry['name']} -> {target}")
                 continue
         if target.exists():
@@ -934,7 +973,7 @@ def verify_installed_venvs(
         if not marker_path.is_file() or not python.is_file():
             raise SystemExit(f"Managed venv is not installed: {target}")
         marker = json.loads(marker_path.read_text(encoding="utf-8"))
-        if marker.get("identity") != venv_identity(manifest, entry):
+        if not venv_marker_matches(marker, venv_identity(manifest, entry)):
             raise SystemExit(f"Managed venv has stale metadata: {target}")
         smoke_code = [
             "import importlib, importlib.metadata as metadata, sys",
