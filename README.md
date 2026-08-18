@@ -40,9 +40,14 @@ cd do-as-i-do
 
 # 从共享依赖包离线恢复并校验全部运行环境
 ./setup_all.sh --managed-offline
+
+# 为当前终端加载托管环境、模型和解释器路径
+source dependency_management/activate.sh
 ```
 
 这一条命令已经包含资源校验、运行时链接生成、四个 Reconstruction Conda 环境恢复、Retargeting venv、完整 Isaac Sim 6.0.1.0 venv，以及 CUDA/A100 烟雾测试。它不会访问 GitHub、PyPI、Hugging Face 或 NVIDIA，也不需要再单独执行 `dependency_management/manage.sh`。命令可以安全重复运行。
+
+`activate.sh` 不会安装或修改环境，只会为当前终端设置 `$ENV_SAM3`、`$ENV_SAM3D`、`$ENV_HAWOR`、`$ENV_TAPNET`、`$RETARGETING_PYTHON`、`$ISAAC_PYTHON` 以及模型路径。每次打开新终端后，如需直接使用这些变量，应重新执行该 `source` 命令；项目提供的 Shell 流水线入口会自行加载路径配置。
 
 共享依赖包位于 `/data/jiaqimeng/retargeting_dev`，模型、环境和缓存均与 Git 仓库分离。MANO 受许可证限制，仍需由获授权的使用者手动提供。环境结构和维护说明见 [`ENVIRONMENT.md`](ENVIRONMENT.md) 与 [`dependency_management/README.md`](dependency_management/README.md)。
 
@@ -70,6 +75,7 @@ cd do-as-i-do
 
 ```bash
 ./setup_all.sh --managed-offline
+source dependency_management/activate.sh
 ```
 
 如需先预览脚本将执行的操作：
