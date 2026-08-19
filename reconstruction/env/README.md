@@ -5,7 +5,7 @@ The pipeline switches between **4 conda envs** (names set in `config/paths.sh`).
 **Recommended:** build each env by following its fork's own setup instructions —
 [`malik-group/sam3`](https://github.com/malik-group/sam3) (`sam3`),
 [`mengjq-research-projects/sam-3d-objects`](https://github.com/mengjq-research-projects/sam-3d-objects) (`sam3d`),
-[`malik-group/HaWoR`](https://github.com/malik-group/HaWoR) (`hawor`),
+[`mengjq-research-projects/HaWoR`](https://github.com/mengjq-research-projects/HaWoR) (`hawor`),
 [`malik-group/tapnet`](https://github.com/malik-group/tapnet) (`tapnet`).
 
 The two options below are **fallbacks** (e.g. on Blackwell / RTX 50xx, where older upstream CUDA pins won't run):
@@ -50,4 +50,3 @@ compatibility change automatically before building:
 | `sam3d`  | `env/sam3d.yml`  | 2, 3, 4 — meshes, pose, opt  | `modules/sam-3d-objects/environments/default.yml` + `requirements*.txt` |
 | `hawor`  | `env/hawor.yml`  | 2 — hand reconstruction      | `modules/HaWoR/requirements.txt` + CUDA 12.8 / torch 2.9 cu128 |
 | `tapnet` | `env/tapnet.yml` | 2.5 — velocity tracking      | `modules/tapnet[torch]` (Python 3.10, torch 2.7 cu128) |
-

@@ -1045,8 +1045,10 @@ def verify_submodules(manifest: dict) -> None:
             capture_output=True,
             text=True,
         ).stdout.strip()
-        suffix = " (local tracked modifications present)" if dirty else ""
-        print(f"{relative}: PASS ({actual}{suffix})")
+        if dirty:
+            failures.append((relative, expected_commit, f"{actual} (dirty)"))
+            continue
+        print(f"{relative}: PASS ({actual})")
     if failures:
         for relative, expected, actual in failures:
             print(f"{relative}: expected {expected}, found {actual}")

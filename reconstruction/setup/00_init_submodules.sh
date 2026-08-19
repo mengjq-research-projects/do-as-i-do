@@ -22,6 +22,4 @@ done
 
 echo "[00] Submodule pins:"
 git submodule status
-echo "[00] Applying project-specific submodule patches..."
-bash "$ROOT/setup/apply_submodule_patches.sh"
 echo "[00] Done. Next: ./setup/01_create_envs.sh"

@@ -336,10 +336,7 @@ setup_managed_offline() {
     fi
 
     if [[ "$SKIP_SUBMODULES" -eq 0 ]]; then
-        log "Applying project patches to pinned submodules"
-        run bash "$ROOT/reconstruction/setup/apply_submodule_patches.sh"
-
-        log "Verifying pinned submodule source without network access"
+        log "Verifying maintained fork pins without network access"
         run_managed verify-submodules
     fi
 
