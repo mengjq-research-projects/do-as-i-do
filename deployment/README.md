@@ -5,8 +5,8 @@ Run a retargeted demo on the real robot. Two stages:
 1. **`mujoco_replay/`** — load a spider `trajectory_mjwp.npz` (from the
    `retargeting/` stage), place + IK-solve it onto the dual-UR3e scene with
    collision-aware [`mink`](https://github.com/kevinzakka/mink) IK, preview/tune
-   in a viser GUI, and save `trajectory_dual_ur3e.npz` (arm + finger joint
-   trajectories).
+   in a viser GUI, move the tracked object with the same workspace transform,
+   and save a complete arm + hand + object scene package.
 2. **`robot_replay/`** — stream `trajectory_dual_ur3e.npz` to a real UR3e arm +
    Sharpa Wave hand at 50 Hz.
 
@@ -41,8 +41,19 @@ The Sharpa Wave hand SDK is proprietary and not shipped — drop it into
 
 Opens a viser web GUI at the printed URL. Tune the workspace placement
 (x/y/z + yaw/pitch/roll), the start frame, and collision avoidance; hit
-**Recompute IK**, then **Save retarget** to write `trajectory_dual_ur3e.npz`
-next to the input trajectory.
+**Recompute IK**, then **Save retarget**. Three files are written next to the
+input trajectory:
+
+```text
+trajectory_dual_ur3e.npz
+deployment_manifest.json
+scene_dual_ur3e_object.xml
+```
+
+The NPZ retains the original `arm_qpos`, `finger_qpos`, and `dt` fields used by
+real-hardware replay, and adds the transformed object pose, timestamps, source
+indices, and valid-frame mask. The object is kinematically authored and visual
+only; it does not alter the collision-aware arm IK solve.
 
 When tuning the workspace placement, adjust x/y/z and yaw. Only tune pitch and
 roll if the gravity alignment (GeoCalib) from reconstruction was significantly
@@ -72,6 +83,17 @@ Headless solve (no GUI) to check IK residuals / collision clearance:
 ./deployment/run_pipeline.sh mujoco-replay \
   --side left --traj .../trajectory_mjwp.npz --solve-only
 ```
+
+Add `--save-on-solve` to write the final package after a headless solve. Validate
+an existing package without opening MuJoCo or Isaac:
+
+```bash
+./deployment/run_pipeline.sh validate-package \
+  retargeting/outputs/sharpa/right/whisking/0
+```
+
+See [`PROJECT_STRUCTURE_AND_WORKFLOW.md`](../PROJECT_STRUCTURE_AND_WORKFLOW.md)
+for the full Reconstruction → Retargeting → MuJoCo → Isaac command sequence.
 
 ## 2. robot_replay (trajectory → hardware)
 

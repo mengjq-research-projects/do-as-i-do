@@ -106,8 +106,10 @@ def main() -> None:
         )
         hand = world.scene.add(
             SingleArticulation(
-                prim_path=mapping["hand_articulation_prim"],
-                name="replay_sharpa_right",
+                prim_path=mapping.get(
+                    "robot_articulation_prim", mapping["hand_articulation_prim"]
+                ),
+                name="replay_robot",
             )
         )
         obj = world.scene.add(
@@ -139,18 +141,23 @@ def main() -> None:
         world.reset()
         if camera is not None:
             camera.initialize()
-        joint_names = package.root_joint_names + package.finger_joint_names
+        joint_names = package.driven_joint_names
         available_dof_names = list(hand.dof_names or [])
         missing = [name for name in joint_names if name not in available_dof_names]
-        root_world_x_name = package.root_joint_names[0]
-        if missing not in ([], [root_world_x_name]):
+        root_world_x_name = (
+            package.root_joint_names[0] if package.root_joint_names else None
+        )
+        allowed_missing = [root_world_x_name] if root_world_x_name else []
+        if missing not in ([], allowed_missing):
             raise RuntimeError(
                 "Isaac articulation is missing joints: "
                 + ", ".join(missing)
                 + "; available DOFs: "
                 + ", ".join(available_dof_names)
             )
-        root_x_is_world_transform = missing == [root_world_x_name]
+        root_x_is_world_transform = bool(root_world_x_name) and missing == [
+            root_world_x_name
+        ]
         runtime_joint_names = (
             joint_names[1:] if root_x_is_world_transform else joint_names
         )
@@ -164,7 +171,11 @@ def main() -> None:
             ]
             raise RuntimeError("Isaac articulation is missing joints: " + ", ".join(missing))
 
-        frame_indices = list(range(0, package.frame_count, args.stride))
+        frame_indices = [
+            frame
+            for frame in range(0, package.frame_count, args.stride)
+            if bool(package.trajectory.valid_mask[frame])
+        ]
         if args.max_frames is not None:
             frame_indices = frame_indices[: args.max_frames]
         if not frame_indices:
@@ -303,7 +314,7 @@ def main() -> None:
                 "state_readback_validation_status": report["status"],
             }
         )
-        (package.directory / "manifest.json").write_text(
+        package.manifest_path.write_text(
             json.dumps(package.manifest, indent=2) + "\n", encoding="utf-8"
         )
         print(f"Saved Isaac readback report: {report_path} ({report['status']})")

@@ -98,7 +98,12 @@ RIGHT_QPOS = [
 ]
 
 
-def build() -> mujoco.MjSpec:
+def build(
+    object_mesh: Path | None = None,
+    *,
+    object_texture: Path | None = None,
+    object_side: str = "right",
+) -> mujoco.MjSpec:
     parent = mujoco.MjSpec()
     parent.modelname = "dual_ur3e"
     # Otherwise attach moves the child subtree, preventing a second attach.
@@ -308,6 +313,50 @@ def build() -> mujoco.MjSpec:
     parent.attach(
         right_hand, prefix="right_hand_", site=parent.site("right_attachment_site")
     )
+
+    # Optional task object used by final robot-scene replay and Isaac export.
+    # It is intentionally visual-only and is driven kinematically from the
+    # reference trajectory.  Keeping contype/conaffinity at zero means adding
+    # it cannot change the collision-aware arm IK solution.
+    if object_mesh is not None:
+        object_mesh = object_mesh.expanduser().resolve()
+        if not object_mesh.is_file():
+            raise FileNotFoundError(f"Object mesh does not exist: {object_mesh}")
+        if object_side not in {"right", "left"}:
+            raise ValueError(f"object_side must be right or left, got {object_side!r}")
+        parent.add_mesh(name="task_object_visual_mesh", file=str(object_mesh))
+        material_name = ""
+        if object_texture is not None:
+            object_texture = object_texture.expanduser().resolve()
+            if not object_texture.is_file():
+                raise FileNotFoundError(
+                    f"Object texture does not exist: {object_texture}"
+                )
+            parent.add_texture(
+                name="task_object_texture",
+                type=mujoco.mjtTexture.mjTEXTURE_2D,
+                file=str(object_texture),
+            )
+            material = parent.add_material(name="task_object_material")
+            material.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = (
+                "task_object_texture"
+            )
+            material_name = "task_object_material"
+        object_body = parent.worldbody.add_body(name=f"{object_side}_object")
+        object_body.add_joint(
+            name=f"{object_side}_object_joint",
+            type=mujoco.mjtJoint.mjJNT_FREE,
+        )
+        object_body.add_geom(
+            name=f"{object_side}_object_visual",
+            type=mujoco.mjtGeom.mjGEOM_MESH,
+            meshname="task_object_visual_mesh",
+            material=material_name,
+            contype=0,
+            conaffinity=0,
+            density=1.0,
+            rgba=[1, 1, 1, 1],
+        )
 
     # Keyframe: specified arm angles + zero for every hand joint.
     # qpos layout follows the body tree (left arm → left hand → right arm →

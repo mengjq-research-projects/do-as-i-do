@@ -28,8 +28,21 @@ def parse_args() -> argparse.Namespace:
 def resolve_scene_xml(package, run_dir: Path | None) -> Path:
     candidates = []
     if run_dir is not None:
-        candidates.append(run_dir.expanduser().resolve() / "scene.xml")
-    recorded = Path(package.manifest["source"]["scene"]).expanduser()
+        explicit_directory = run_dir.expanduser().resolve()
+        candidates.append(
+            explicit_directory
+            / (
+                package.manifest["scene"]["mjcf"]
+                if package.is_robot_scene
+                else "scene.xml"
+            )
+        )
+    recorded_value = (
+        package.manifest["scene"]["mjcf"]
+        if package.is_robot_scene
+        else package.manifest["source"]["scene"]
+    )
+    recorded = Path(recorded_value).expanduser()
     candidates.append(recorded if recorded.is_absolute() else package.directory / recorded)
     for candidate in candidates:
         if candidate.is_file():
@@ -51,7 +64,7 @@ def nearest_articulation_root(prim, UsdPhysics):
 def inspect_stage(stage, package, UsdPhysics) -> dict:
     prims = list(stage.Traverse())
     by_name = {prim.GetName(): prim for prim in prims}
-    required_joints = package.root_joint_names + package.finger_joint_names
+    required_joints = package.driven_joint_names
     missing = [name for name in required_joints if name not in by_name]
     if missing:
         raise RuntimeError(
@@ -65,29 +78,34 @@ def inspect_stage(stage, package, UsdPhysics) -> dict:
     articulation_roots.discard(None)
     if len(articulation_roots) != 1:
         raise RuntimeError(
-            "Expected all Sharpa joints under one articulation root, found "
+            "Expected all driven robot joints under one articulation root, found "
             f"{sorted(articulation_roots)}."
         )
 
     # Isaac Sim 6 can emit both the rigid-body Xform and a child geometry prim
     # with the same MJCF name.  Replay must target the rigid body, not its mesh.
+    object_name = package.manifest["object"].get("body_name", "right_object")
     object_candidates = [
         prim
         for prim in prims
-        if prim.GetName() == "right_object"
+        if prim.GetName() == object_name
         and prim.HasAPI(UsdPhysics.RigidBodyAPI)
     ]
     if len(object_candidates) != 1:
         raise RuntimeError(
-            "Expected one imported prim named 'right_object', found "
+            f"Expected one imported prim named {object_name!r}, found "
             f"{len(object_candidates)}."
         )
     return {
         "schema_version": "1.0",
         "generated_at": datetime.now(UTC).isoformat(),
         "scene_usd": str(Path(stage.GetRootLayer().realPath).resolve()),
+        "robot_articulation_prim": next(iter(articulation_roots)),
+        # Backward-compatible alias used by existing Level A packages.
         "hand_articulation_prim": next(iter(articulation_roots)),
         "object_prim": str(object_candidates[0].GetPath()),
+        "package_kind": "robot_scene" if package.is_robot_scene else "level_a",
+        "arm_joint_names": list(package.arm_joint_names),
         "root_joint_names": list(package.root_joint_names),
         "finger_joint_names": list(package.finger_joint_names),
         "joint_value_unit": "meter for root translations; radian otherwise",
@@ -111,7 +129,7 @@ def main() -> None:
         ) from error
 
     simulation_app = SimulationApp(
-        {"headless": args.headless, "fast_shutdown": False}
+        {"headless": args.headless, "fast_shutdown": True}
     )
     try:
         from isaacsim.core.utils.extensions import enable_extension
@@ -180,7 +198,7 @@ def main() -> None:
                 "asset_conversion_status": "pass",
             }
         )
-        (package.directory / "manifest.json").write_text(
+        package.manifest_path.write_text(
             json.dumps(package.manifest, indent=2) + "\n", encoding="utf-8"
         )
         print(f"Created Isaac scene: {output}")

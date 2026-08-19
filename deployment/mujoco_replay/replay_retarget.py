@@ -14,7 +14,8 @@ retargeted Sharpa wrist pose lives in spider's world frame; per frame we
      intersecting itself, the table/breadboard/blocks and (optionally) the
      other arm; a DofFreezingTask pins every non-arm dof so only the 6 arm
      joints move.
-  5. copy the 22 finger joints straight through.
+  5. copy the 22 finger joints straight through, and apply the same rigid
+     workspace transform to the tracked object's 7-DoF pose.
 
 The other arm and hand stay at the home keyframe.
 
@@ -36,8 +37,15 @@ import mink
 import mujoco
 import numpy as np
 import viser
-
 from build_scene import build
+from final_package import (
+    TRAJECTORY_FILENAME,
+    discover_object_mesh,
+    discover_object_texture,
+    load_source_qpos,
+    save_final_package,
+    transform_object_trajectory,
+)
 
 # Mirrors the HAND_OFFSET constant inside build_scene.build():
 # coupler_black_height (0.01325) + coupler_silver_height (0.0175) m
@@ -72,7 +80,7 @@ DEFAULT_START_FRAME = 600
 
 # Filename written by the GUI "Save retarget" button — also the name we
 # look for when auto-detecting a reference file next to the input traj.
-RETARGET_FILENAME = "trajectory_dual_ur3e.npz"
+RETARGET_FILENAME = TRAJECTORY_FILENAME
 
 
 def _load_reference_defaults(path: Path) -> dict | None:
@@ -110,7 +118,7 @@ def _load_reference_defaults(path: Path) -> dict | None:
 #   [0:3]  wrist xyz (slide joints)
 #   [3:6]  wrist rotation (hinges Rx, Ry, Rz applied as nested bodies)
 #   [6:28] 22 finger joints
-#   [28:35] object free joint (ignored here)
+#   [28:35] object free joint (xyz + normalized wxyz)
 SPIDER_FINGER_SLICE = slice(6, 28)
 
 
@@ -591,14 +599,38 @@ def _resolve_indices(model: mujoco.MjModel, side: str) -> dict:
         )] for n in finger_joints],
         dtype=np.int32,
     )
+    model_finger_joint_names = [f"{side}_hand_{name}" for name in finger_joints]
 
     site_id = mujoco.mj_name2id(
         model, mujoco.mjtObj.mjOBJ_SITE, f"{side}_attachment_site"
     )
+    object_joint_name = f"{side}_object_joint"
+    object_joint_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_JOINT, object_joint_name
+    )
+    object_qadr = (
+        int(model.jnt_qposadr[object_joint_id]) if object_joint_id >= 0 else None
+    )
     return {
         "arm_qadr": arm_qadr, "finger_qadr": finger_qadr, "site_id": site_id,
         "arm_joint_names": arm_joints, "finger_joint_names": finger_joints,
+        "model_finger_joint_names": model_finger_joint_names,
+        "object_qadr": object_qadr,
     }
+
+
+def _joint_limits(model: mujoco.MjModel, names: list[str]) -> np.ndarray:
+    """Return finite lower/upper bounds for manifest validation and Isaac."""
+    limits = []
+    for name in names:
+        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        if joint_id < 0:
+            raise ValueError(f"Scene is missing joint {name!r}.")
+        if model.jnt_limited[joint_id]:
+            limits.append(model.jnt_range[joint_id].copy())
+        else:
+            limits.append(np.array([-2.0 * np.pi, 2.0 * np.pi]))
+    return np.asarray(limits, dtype=np.float64)
 
 
 # ---------------------------------------------------------------------------
@@ -688,13 +720,49 @@ def _resolve_workspace_defaults(args: argparse.Namespace) -> None:
     args.start_frame_from_reference = have_reference and args.start_frame is None
     if args.start_frame is None:
         args.start_frame = ref["start_frame"]
+    if args.output is None:
+        args.output = args.traj.parent / RETARGET_FILENAME
 
 
 def main(args: argparse.Namespace) -> None:
     _resolve_workspace_defaults(args)
 
+    print(f"Loading retarget trajectory: {args.traj}")
+    qpos = load_source_qpos(args.traj)
+    n_frames = qpos.shape[0]
+    # The common MJWP output is chunked as stages x steps.  The package helper
+    # already sorts chunks by sim_step; these labels are display-only.
+    n_stages, steps_per_stage = 1, n_frames
+    with np.load(args.traj, allow_pickle=False) as source_data:
+        raw_qpos = np.asarray(source_data["qpos"])
+        if raw_qpos.ndim == 3:
+            n_stages, steps_per_stage = raw_qpos.shape[:2]
+    print(
+        f"Trajectory: {n_stages} stage(s) x {steps_per_stage} step(s) "
+        f"= {n_frames} frames"
+    )
+
+    object_mesh = None if args.no_object else args.object_mesh
+    if object_mesh is None and not args.no_object:
+        object_mesh = discover_object_mesh(args.traj, args.side)
+    object_texture = discover_object_texture(object_mesh)
+    if object_mesh is None and not args.no_object:
+        raise FileNotFoundError(
+            "Could not resolve the task object's visual mesh from the source "
+            f"scene next to {args.traj}. Pass --object-mesh explicitly, or "
+            "use --no-object for the legacy robot-only preview."
+        )
+    if object_mesh is not None:
+        print(f"Loading task object mesh: {object_mesh}")
+        if object_texture is not None:
+            print(f"Loading task object texture: {object_texture}")
+
     print("Building dual_ur3e scene...")
-    spec = build()
+    spec = build(
+        object_mesh=object_mesh,
+        object_texture=object_texture,
+        object_side=args.side,
+    )
     model = spec.compile()
 
     home_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
@@ -709,23 +777,10 @@ def main(args: argparse.Namespace) -> None:
     finger_qadr = idx["finger_qadr"]
     site_id = idx["site_id"]
     arm_joint_names = idx["arm_joint_names"]
-    finger_joint_names = idx["finger_joint_names"]
+    model_finger_joint_names = idx["model_finger_joint_names"]
+    object_qadr = idx["object_qadr"]
     mount_yaw_deg = HAND_MOUNT_YAW_DEG[args.side]
     print(f"Retargeting onto the {args.side} arm + {args.side} Sharpa hand.")
-
-    print(f"Loading retarget trajectory: {args.traj}")
-    with np.load(args.traj) as npz:
-        qpos = np.asarray(npz["qpos"])
-    if qpos.ndim == 3:
-        n_stages, steps_per_stage, _ = qpos.shape
-        qpos = qpos.reshape(-1, qpos.shape[-1])
-    else:
-        n_stages, steps_per_stage = 1, qpos.shape[0]
-    n_frames = qpos.shape[0]
-    print(
-        f"Trajectory: {n_stages} stage(s) x {steps_per_stage} step(s) "
-        f"= {n_frames} frames"
-    )
 
     sim_dt = 0.005  # spider config.yaml default
     duration = n_frames * sim_dt
@@ -884,6 +939,82 @@ def main(args: argparse.Namespace) -> None:
             f"{clr*1000:.1f} mm{flag}{qpf}"
         )
 
+    workspace_xyz = np.array(
+        [args.workspace_x, args.workspace_y, args.workspace_z], dtype=np.float64
+    )
+    object_position, object_quaternion = transform_object_trajectory(
+        qpos,
+        wrist_anchor=qpos[args.start_frame, 0:3],
+        workspace_xyz=workspace_xyz,
+        yaw_deg=args.workspace_yaw,
+        pitch_deg=args.workspace_pitch,
+        roll_deg=args.workspace_roll,
+    )
+
+    def write_final_package(
+        output: Path,
+        *,
+        wx: float,
+        wy: float,
+        wz: float,
+        yaw: float,
+        pitch: float,
+        roll: float,
+        start_frame: int,
+    ) -> tuple[Path, Path, Path]:
+        if object_mesh is None or object_qadr is None:
+            raise ValueError(
+                "A final robot-scene package requires an object mesh. "
+                "Rerun without --no-object."
+            )
+        transformed_position, transformed_quaternion = transform_object_trajectory(
+            qpos,
+            wrist_anchor=qpos[start_frame, 0:3],
+            workspace_xyz=np.array([wx, wy, wz], dtype=np.float64),
+            yaw_deg=yaw,
+            pitch_deg=pitch,
+            roll_deg=roll,
+        )
+        object_position[:] = transformed_position
+        object_quaternion[:] = transformed_quaternion
+        return save_final_package(
+            output_path=output,
+            scene_xml=spec.to_xml(),
+            arm_qpos=solved_arm_qpos,
+            finger_qpos=qpos[:, SPIDER_FINGER_SLICE],
+            object_position=object_position,
+            object_quaternion=object_quaternion,
+            arm_joint_names=arm_joint_names,
+            finger_joint_names=model_finger_joint_names,
+            arm_joint_limits=_joint_limits(model, arm_joint_names),
+            finger_joint_limits=_joint_limits(model, model_finger_joint_names),
+            dt=sim_dt,
+            start_frame=start_frame,
+            workspace_xyz=np.array([wx, wy, wz], dtype=np.float64),
+            workspace_yaw_deg=yaw,
+            workspace_pitch_deg=pitch,
+            workspace_roll_deg=roll,
+            side=args.side,
+            source_traj=args.traj,
+            object_mesh=object_mesh,
+            object_texture=object_texture,
+        )
+
+    if args.save_on_solve:
+        written = write_final_package(
+            args.output,
+            wx=args.workspace_x,
+            wy=args.workspace_y,
+            wz=args.workspace_z,
+            yaw=args.workspace_yaw,
+            pitch=args.workspace_pitch,
+            roll=args.workspace_roll,
+            start_frame=args.start_frame,
+        )
+        print("Saved final robot-scene package:")
+        for path in written:
+            print(f"  {path}")
+
     if args.solve_only:
         print("--solve-only: IK solved, skipping the viser GUI.")
         return
@@ -931,7 +1062,7 @@ def main(args: argparse.Namespace) -> None:
         )
         target_frame.wxyz = (float(q[0]), float(q[1]), float(q[2]), float(q[3]))
 
-    frame_idx = [0]
+    frame_idx = [int(args.start_frame)]
     playing = [True]
     speed = [float(args.speed)]
     looping = [True]
@@ -941,7 +1072,8 @@ def main(args: argparse.Namespace) -> None:
     tabs = mj_scene.create_visualization_gui()
     with tabs.add_tab("Playback", icon=viser.Icon.PLAYER_PLAY):
         timeline = server.gui.add_slider(
-            "Frame", min=0, max=n_frames - 1, step=1, initial_value=0,
+            "Frame", min=0, max=n_frames - 1, step=1,
+            initial_value=int(args.start_frame),
         )
         time_label = server.gui.add_html("")
         play_btn = server.gui.add_button("Pause", icon=viser.Icon.PLAYER_PAUSE)
@@ -1046,7 +1178,7 @@ def main(args: argparse.Namespace) -> None:
             "Recompute IK", icon=viser.Icon.REFRESH
         )
 
-        default_out = str(args.traj.parent / RETARGET_FILENAME)
+        default_out = str(args.output)
         save_path = server.gui.add_text("output path", initial_value=default_out)
         save_status = server.gui.add_html("")
         save_btn = server.gui.add_button(
@@ -1058,31 +1190,20 @@ def main(args: argparse.Namespace) -> None:
             save_btn.disabled = True
             try:
                 out = Path(save_path.value).expanduser()
-                out.parent.mkdir(parents=True, exist_ok=True)
-                arm_qpos_out = solved_arm_qpos.copy()
-                finger_qpos_out = qpos[:, SPIDER_FINGER_SLICE].astype(np.float64)
-                np.savez(
+                written = write_final_package(
                     out,
-                    arm_qpos=arm_qpos_out,
-                    finger_qpos=finger_qpos_out,
-                    arm_joint_names=np.array(arm_joint_names),
-                    finger_joint_names=np.array(finger_joint_names),
-                    dt=np.float64(sim_dt),
-                    start_frame=np.int64(int(ws_start_frame.value)),
-                    workspace_xyz=np.array(
-                        [float(ws_x.value), float(ws_y.value), float(ws_z.value)]
-                    ),
-                    workspace_yaw_deg=np.float64(float(ws_yaw.value)),
-                    workspace_pitch_deg=np.float64(float(ws_pitch.value)),
-                    workspace_roll_deg=np.float64(float(ws_roll.value)),
-                    side=str(args.side),
-                    source_traj=str(args.traj),
+                    wx=float(ws_x.value),
+                    wy=float(ws_y.value),
+                    wz=float(ws_z.value),
+                    yaw=float(ws_yaw.value),
+                    pitch=float(ws_pitch.value),
+                    roll=float(ws_roll.value),
+                    start_frame=int(ws_start_frame.value),
                 )
                 save_status.content = (
                     f'<span style="font-size:0.85em;color:#3a7">'
-                    f"saved {arm_qpos_out.shape[0]} frames "
-                    f"({arm_qpos_out.shape[1]} arm + "
-                    f"{finger_qpos_out.shape[1]} finger) → {out}"
+                    f"saved {solved_arm_qpos.shape[0]} frames "
+                    f"(arm + fingers + object) → {written[0]}"
                     f"</span>"
                 )
             except Exception as e:
@@ -1129,6 +1250,20 @@ def main(args: argparse.Namespace) -> None:
                     int(ik_iters_slider.value), sf_idx,
                 )
                 dt = time.perf_counter() - t0
+                transformed_position, transformed_quaternion = (
+                    transform_object_trajectory(
+                        qpos,
+                        wrist_anchor=qpos[sf_idx, 0:3],
+                        workspace_xyz=np.array(
+                            [float(ws_x.value), float(ws_y.value), float(ws_z.value)]
+                        ),
+                        yaw_deg=float(ws_yaw.value),
+                        pitch_deg=float(ws_pitch.value),
+                        roll_deg=float(ws_roll.value),
+                    )
+                )
+                object_position[:] = transformed_position
+                object_quaternion[:] = transformed_quaternion
                 col_line = ""
                 if ik_solver.collision_limit is not None:
                     clr = ik_solver.worst_clearance
@@ -1164,6 +1299,9 @@ def main(args: argparse.Namespace) -> None:
     def render_frame(f: int) -> None:
         data.qpos[arm_qadr] = solved_arm_qpos[f]
         data.qpos[finger_qadr] = qpos[f, SPIDER_FINGER_SLICE]
+        if object_qadr is not None:
+            data.qpos[object_qadr : object_qadr + 3] = object_position[f]
+            data.qpos[object_qadr + 3 : object_qadr + 7] = object_quaternion[f]
         mujoco.mj_forward(model, data)
         mj_scene.update_from_mjdata(data)
         stage = f // steps_per_stage if steps_per_stage > 0 else 0
@@ -1184,7 +1322,7 @@ def main(args: argparse.Namespace) -> None:
             f"</span>"
         )
 
-    render_frame(0)
+    render_frame(frame_idx[0])
 
     last_time = time.perf_counter()
     try:
@@ -1241,6 +1379,31 @@ def _parse_args() -> argparse.Namespace:
             "defaults for --workspace-x/-y/-z, --workspace-yaw, --start-frame "
             "(any flag passed explicitly still wins). When omitted, the script "
             "auto-detects a sibling trajectory_dual_ur3e.npz next to --traj."
+        ),
+    )
+    p.add_argument(
+        "--object-mesh", type=Path,
+        help=(
+            "Task object visual OBJ. By default it is resolved from scene.xml "
+            "beside --traj."
+        ),
+    )
+    p.add_argument(
+        "--no-object", action="store_true",
+        help="Legacy robot-only preview; final package saving is disabled.",
+    )
+    p.add_argument(
+        "--output", type=Path,
+        help=(
+            "Final NPZ path (default: trajectory_dual_ur3e.npz beside --traj). "
+            "The manifest and full MJCF are written beside it."
+        ),
+    )
+    p.add_argument(
+        "--save-on-solve", action="store_true",
+        help=(
+            "Write the final arm + fingers + object package immediately after "
+            "IK. Useful together with --solve-only for headless generation."
         ),
     )
     # Defaults are resolved in _resolve_workspace_defaults: reference file

@@ -40,6 +40,44 @@ class ReplayPackageTest(unittest.TestCase):
             self.assertAlmostEqual(package.max_clip_rad, 0.1)
             self.assertEqual(package.hand_joint_state(0).shape, (7,))
 
+    def test_loads_final_robot_scene_package(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            arm_names = [f"arm_{index}" for index in range(6)]
+            finger_names = [f"finger_{index}" for index in range(22)]
+            manifest = {
+                "schema_version": "deployment.robot_scene.v1",
+                "timing": {"frame_count": 3, "sim_dt_seconds": 0.005},
+                "trajectory": {"file": "trajectory_dual_ur3e.npz"},
+                "robot": {
+                    "arm_joints": [
+                        {"name": name, "lower_rad": -3.0, "upper_rad": 3.0}
+                        for name in arm_names
+                    ],
+                    "finger_joints": [
+                        {"name": name, "lower_rad": -1.0, "upper_rad": 1.0}
+                        for name in finger_names
+                    ],
+                },
+            }
+            (directory / "deployment_manifest.json").write_text(json.dumps(manifest))
+            np.savez(
+                directory / "trajectory_dual_ur3e.npz",
+                timestamps=np.arange(3) * 0.005,
+                arm_qpos=np.zeros((3, 6)),
+                finger_qpos=np.zeros((3, 22)),
+                object_position=np.zeros((3, 3)),
+                object_quaternion=np.tile([1.0, 0.0, 0.0, 0.0], (3, 1)),
+                valid_mask=np.array([False, True, True]),
+                source_frame_indices=np.arange(3),
+            )
+
+            package = load_replay_package(directory)
+
+            self.assertTrue(package.is_robot_scene)
+            self.assertEqual(package.driven_joint_names, tuple(arm_names + finger_names))
+            self.assertEqual(package.hand_joint_state(1).shape, (28,))
+
 
 if __name__ == "__main__":
     unittest.main()

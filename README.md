@@ -4,7 +4,7 @@
 
 [**Project Page**](https://do-as-i-do.com/) | [**arXiv**](https://arxiv.org/abs/2606.19333) 
 
-这是 Do as I Do 的代码发布版本：从单段手物交互演示视频出发，先重建物体与手部运动，再将该运动重定向到机器人手，并导出为 Isaac Sim 运动学回放数据。当前项目验收范围结束于 Isaac；仓库中的 `deployment/` 仅作为可选历史模块保留，不属于新人安装或当前运行链路。
+这是 Do as I Do 的代码发布版本：从单段手物交互演示视频出发，先重建物体与手部运动，再将该运动重定向到机器人手，并生成可由 MuJoCo 与 Isaac Sim 共同消费的 UR3e＋Sharpa＋物体运动学场景。完整目录关系、数据协议和端到端命令见 [`PROJECT_STRUCTURE_AND_WORKFLOW.md`](PROJECT_STRUCTURE_AND_WORKFLOW.md)。
 
 ## 流程概览
 
@@ -12,19 +12,19 @@
 |---|---|---|---|
 | `reconstruction/` | `reconstruction/run_pipeline.sh` | 演示视频 + 参考帧 / 目标物体 / 锚定手 | mask、物体网格、pointmap、手部网格、物体 6-DoF 轨迹 |
 | `retargeting/` | `retargeting/run_pipeline.sh` | reconstruction 输出目录 | MuJoCo 场景、IK 轨迹、物理优化后的 `trajectory_mjwp.npz` |
-| `isaac_export/` | `isaac_export/run_pipeline.sh` | retargeting 运行目录 | 标准轨迹、manifest、质量报告和 Isaac 环境报告 |
-| `deployment/` | `deployment/run_pipeline.sh` | retargeting 生成的 `trajectory_mjwp.npz` | 双 UR3e 关节轨迹，以及可选的真实硬件回放 |
+| `isaac_export/` | `isaac_export/run_pipeline.sh` | Level A 或最终机器人包 | 标准轨迹、USD、Isaac 回放和回读报告 |
+| `deployment/` | `deployment/run_pipeline.sh` | retargeting 生成的 `trajectory_mjwp.npz` | 双 UR3e＋Sharpa＋物体最终包，以及可选真实硬件回放 |
 
 面向使用者的阶段入口统一为 `run_pipeline.sh`。各目录中的 `.py` 文件是内部实现或测试模块，不需要手动选择 Python 解释器；shell 入口会自动使用对应的托管环境或仓库本地环境。
 
-各模块保持独立环境和清晰的数据边界。`isaac_export/` 与 `deployment/` 都是 `retargeting/` 的下游，不互相依赖。外部依赖代码以 git submodule 的形式随仓库一并提供，并已经带有项目所需的定制修改。
+各模块保持独立环境和清晰的数据边界。`isaac_export/` 可以直接消费 `retargeting/` 的 Level A 数据，也可以消费 `deployment/` 产生的最终机器人场景包。外部依赖代码以 git submodule 的形式随仓库一并提供，并已经带有项目所需的定制修改。
 
 ## 仓库结构
 
 - **`reconstruction/`** — 从手物交互演示视频中完成物体与手部重建，以及 6-DoF 位姿跟踪（SAM3 -> SAM3D mesh -> MoGe pointmaps -> HaWoR -> TAPIR -> guided diffusion tracking -> 可选投影）。详见 [`reconstruction/README.md`](reconstruction/README.md)。
 - **`retargeting/`** — 将重建得到的手物演示转换为机器人手轨迹（数据处理 -> 凸分解 -> MJCF 场景生成 -> IK -> MuJoCo Warp 中的采样式 MPC）。详见 [`retargeting/README.md`](retargeting/README.md)。
-- **`isaac_export/`** — 层级 A 的独立下游导出器。当前完成 Retargeting 轨迹标准化、22 个 Sharpa 关节协议冻结、时间与 warmup 处理、manifest 和自动质量报告；后续 USD 资产转换与 Isaac 回放需要 Isaac Sim 环境。详见 [`isaac_export/README.md`](isaac_export/README.md)。
-- **`deployment/`** — 将 retargeting 结果适配到双 UR3e 场景，并可进一步发送到真实机器人系统。详见 [`deployment/README.md`](deployment/README.md)。
+- **`isaac_export/`** — 支持自由手根 Level A 与最终 UR3e 场景两种包；负责 USD 转换、运动学回放和状态回读。详见 [`isaac_export/README.md`](isaac_export/README.md)。
+- **`deployment/`** — 将 retargeting 结果适配到双 UR3e 场景，统一变换并显示任务物体，保存最终场景包；也可进一步发送到真实机器人系统。详见 [`deployment/README.md`](deployment/README.md)。
 - **`reconstruction/whisking/`** — 仓库内附带的 whisk 示例处理结果。
 - **`retargeting/outputs/sharpa/right/whisking/0/`** — 仓库内附带的 whisk 示例 retargeting 输出，其中包括可直接查看的 `trajectory_mjwp.npz`。
 - **`isaac_export/outputs/whisking/`** — 运行导出器后生成的 whisking 标准轨迹和报告；该目录是本地生成物，不进入版本控制。
@@ -57,7 +57,7 @@ source dependency_management/activate.sh
 2. 使用 [`retargeting/run_pipeline.sh`](retargeting/run_pipeline.sh) 将结果重定向到机器人手。
 3. 使用 [`isaac_export/run_pipeline.sh`](isaac_export/run_pipeline.sh) 生成 Isaac Level A 标准轨迹和自动检查报告。
 
-`deployment/` 不属于当前项目范围，不需要安装其 Conda 环境、Sharpa Wave SDK、UR3e 配置或真实机器人网络。
+MuJoCo 最终场景预览会复用 Retargeting 环境，不需要额外安装。只有真实硬件回放才需要 Deployment Conda 环境、Sharpa Wave SDK、UR3e 配置和机器人网络。
 
 ## 环境概览
 
@@ -193,7 +193,9 @@ cd "$(git rev-parse --show-toplevel)"
 ```
 
 `mujoco-replay` 会自动复用一键离线安装创建的托管 Retargeting 环境，不需要
-额外创建 Deployment 环境。
+额外创建 Deployment 环境。点击 **Save retarget** 后会同时保存机械臂、手指、
+物体轨迹、最终场景 XML 和 manifest；校验与 Isaac 完整场景命令见
+[`PROJECT_STRUCTURE_AND_WORKFLOW.md`](PROJECT_STRUCTURE_AND_WORKFLOW.md)。
 
 真实硬件回放位于 `deployment/robot_replay/`，需要 UR3e 场地配置和 Sharpa Wave SDK。完整说明见 [`deployment/README.md`](deployment/README.md)。
 

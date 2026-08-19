@@ -3,6 +3,14 @@
 This module is an independent downstream stage. It does not modify or rerun
 Reconstruction or Retargeting.
 
+It accepts two package protocols:
+
+- the original Level A package (`manifest.json` + `trajectory.npz`), containing
+  a free Sharpa hand root, fingers, and object;
+- the final robot-scene package (`deployment_manifest.json` +
+  `trajectory_dual_ur3e.npz`), containing UR3e arm joints, Sharpa fingers, and
+  the same transformed object trajectory.
+
 The current implementation completes the Isaac-independent data boundary:
 
 - reads a right-hand Sharpa Retargeting run;
@@ -125,3 +133,27 @@ Or run headless and render an MP4:
 The replayer drives the six scalar wrist joints, 22 Sharpa finger joints, and
 the object world pose by name. Values outside the MJCF finger limits are clipped
 before they reach PhysX. `Ctrl+C` stops either replay mode safely.
+
+## Full UR3e + Sharpa + object scene
+
+First save the final package from `deployment/mujoco-replay` (or use its
+`--save-on-solve` option). Then point the same Isaac commands directly at the
+Retargeting run directory:
+
+```bash
+RUN_DIR=retargeting/outputs/sharpa/right/whisking/0
+
+./isaac_export/run_pipeline.sh build-usd \
+  --package-dir "$RUN_DIR" \
+  --headless
+
+./isaac_export/run_pipeline.sh replay \
+  --package-dir "$RUN_DIR" \
+  --realtime
+```
+
+Package detection is automatic. In this mode Isaac imports
+`scene_dual_ur3e_object.xml`, drives the active six-axis UR3e articulation plus
+22 Sharpa joints, and writes the object world pose each frame. Invalid warmup
+frames before `start_frame` are skipped. This remains a deterministic kinematic
+reference replay rather than a contact-driven object simulation.

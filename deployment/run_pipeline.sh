@@ -17,6 +17,11 @@ case "${1:-}" in
         ENTRYPOINT="$HERE/mujoco_replay/replay_retarget.py"
         shift
         ;;
+    validate-package)
+        ACTION="$1"
+        ENTRYPOINT="$HERE/mujoco_replay/validate_package.py"
+        shift
+        ;;
     robot-replay)
         ACTION="$1"
         ENTRYPOINT="$HERE/robot_replay/run_npz.py"
@@ -31,6 +36,7 @@ case "${1:-}" in
         cat <<'EOF'
 Usage:
   ./deployment/run_pipeline.sh mujoco-replay [REPLAY_ARGS...]
+  ./deployment/run_pipeline.sh validate-package PACKAGE_DIR
   ./deployment/run_pipeline.sh robot-replay [ROBOT_ARGS...]
   ./deployment/run_pipeline.sh home [HOME_ARGS...]
 
@@ -50,7 +56,7 @@ PYTHON_CANDIDATES=(
 # The simulation-only preview uses the same public Python dependencies as
 # Retargeting, so the managed offline Retargeting venv is sufficient.  Keep
 # the proprietary real-hardware actions on the dedicated Deployment env.
-if [[ "$ACTION" == "mujoco-replay" ]]; then
+if [[ "$ACTION" == "mujoco-replay" || "$ACTION" == "validate-package" ]]; then
     PYTHON_CANDIDATES+=(
         "${RETARGETING_PYTHON:-}"
         "${RETARGETING_VENV:+${RETARGETING_VENV}/bin/python}"
@@ -74,7 +80,7 @@ for candidate in "${PYTHON_CANDIDATES[@]}"; do
     fi
 done
 
-if [[ "$ACTION" == "mujoco-replay" ]]; then
+if [[ "$ACTION" == "mujoco-replay" || "$ACTION" == "validate-package" ]]; then
     cat >&2 <<'EOF'
 Managed Retargeting Python environment was not found.
 Restore it from the repository root:
