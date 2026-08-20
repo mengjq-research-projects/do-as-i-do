@@ -55,9 +55,30 @@ else
 fi
 source "$CONDA_BASE/etc/profile.d/conda.sh"
 
+# Some Conda packages (notably HaWoR's binutils package) run activation hooks
+# containing harmless probe commands that return non-zero.  With this script's
+# `set -e`, Bash would abort inside the hook before `conda activate` could
+# finish, even though activation succeeds when allowed to complete.  Disable
+# errexit only around Conda's activation machinery, then restore it and check
+# Conda's final status explicitly.
+activate_conda_env() {
+    local env_name="$1"
+    local activate_status
+
+    set +e
+    conda activate "$env_name"
+    activate_status=$?
+    set -e
+
+    if [[ "$activate_status" -ne 0 ]]; then
+        echo "ERROR: failed to activate Conda environment: $env_name" >&2
+        return "$activate_status"
+    fi
+}
+
 # Frame extraction (Steps 0 & 1) uses ffmpeg from the sam3 env — activate it FIRST so
 # no system/base ffmpeg is required and the pipeline runs directly on a clip.
-conda activate "$ENV_SAM3"
+activate_conda_env "$ENV_SAM3"
 
 # ──────────────── Step 0: Extract all frames ───────────────────────────
 echo "=== Extracting all frames ==="
@@ -137,16 +158,58 @@ fi
 
 # ──────────────── Step 2: 3D reconstruction, pointmaps, HaWoR ────────
 echo "=== Running batch masks to meshes ==="
-conda activate "$ENV_SAM3D"
-cd "$SAM3D_DIR"                                  # overlay: generate_mesh_sam3d.py
-python generate_mesh_sam3d.py \
-    --config "$SAM3D_CONFIG" \
-    --image_path "$FRAME_PATH" \
-    --masks_dir "$MASKS_DIR"
+activate_conda_env "$ENV_SAM3D"
+
+REFERENCE_MESH_IDS=()
+for OBJ_NAME in "${OBJECT_NAMES[@]}"; do
+    REFERENCE_MESH_IDS+=("${OBJ_NAME// /_}")
+done
+REFERENCE_MESH_IDS+=("$HAND_ID")
+
+REFERENCE_MESHES_COMPLETE=true
+for MESH_ID in "${REFERENCE_MESH_IDS[@]}"; do
+    MESH_ROOT="$MASKS_DIR/$MESH_ID"
+    if [[ ! -s "$MESH_ROOT/$MESH_ID.obj" || \
+          ! -s "$MESH_ROOT/material.mtl" || \
+          ! -s "$MESH_ROOT/material_0.png" ]]; then
+        REFERENCE_MESHES_COMPLETE=false
+        break
+    fi
+done
+
+if [[ "$REFERENCE_MESHES_COMPLETE" == true ]]; then
+    echo "Skipping SAM3D mesh generation: all reference meshes are complete."
+else
+    cd "$SAM3D_DIR"                              # overlay: generate_mesh_sam3d.py
+    python generate_mesh_sam3d.py \
+        --config "$SAM3D_CONFIG" \
+        --image_path "$FRAME_PATH" \
+        --masks_dir "$MASKS_DIR"
+fi
 
 cd "$SCRIPTS_DIR"
 echo "=== Computing pointmap for reference frame ==="
-python get_pointmap_dir.py --image "$FRAME_PATH" --output "$POINTMAP_PATH"
+if python - "$POINTMAP_PATH" "$INTRINSICS_PATH" <<'PY'
+import pathlib
+import sys
+
+import numpy as np
+
+pointmap_path = pathlib.Path(sys.argv[1])
+intrinsics_path = pathlib.Path(sys.argv[2])
+try:
+    pointmap = np.load(pointmap_path, allow_pickle=False)
+    intrinsics = [float(value) for value in intrinsics_path.read_text().split()]
+    complete = pointmap.size > 0 and len(intrinsics) == 4
+except (OSError, ValueError):
+    complete = False
+raise SystemExit(0 if complete else 1)
+PY
+then
+    echo "Skipping reference pointmap: existing pointmap and intrinsics are valid."
+else
+    python get_pointmap_dir.py --image "$FRAME_PATH" --output "$POINTMAP_PATH"
+fi
 
 echo "=== Running HaWoR ==="
 if python - "$HAND_MESHES_PATH" "$TOTAL_FRAME_COUNT" <<'PY'
@@ -174,7 +237,7 @@ else
         echo "  $MANO_LEFT" >&2
         exit 1
     fi
-    conda activate "$ENV_HAWOR"
+    activate_conda_env "$ENV_HAWOR"
     cd "$HAWOR_DIR"                              # patched: demo.py
     IMG_FOCAL=$(head -n 1 "$INTRINSICS_PATH")
     python demo.py \
@@ -188,14 +251,14 @@ fi
 
 echo "=== Computing pointmaps for all frames ==="
 cd "$SCRIPTS_DIR"
-conda activate "$ENV_SAM3D"
+activate_conda_env "$ENV_SAM3D"
 python get_pointmap_dir.py --image_dir "$VIDEO_DIR/all_frames"
 
 echo "=== Estimating gravity (GeoCalib) ==="
 python predict_video_gravity.py "$VIDEO_DIR/all_frames" --output_path "$VIDEO_DIR/gravity.json"
 
 # ──────────────── Step 2.5: TAPIR velocity tracking ───────────────────
-conda activate "$ENV_TAPNET"
+activate_conda_env "$ENV_TAPNET"
 echo "=== Running TAPIR velocity tracking ==="
 cd "$SCRIPTS_DIR"
 for OBJ_NAME in "${OBJECT_NAMES[@]}"; do
@@ -209,7 +272,7 @@ for OBJ_NAME in "${OBJECT_NAMES[@]}"; do
 done
 
 # ──────────────── Step 3: Object Tracking using guided pose prediction & projection ─────────
-conda activate "$ENV_SAM3D"
+activate_conda_env "$ENV_SAM3D"
 echo "=== Running guided pose prediction for object tracking ==="
 cd "$FASTSAM3D_DIR"                              # overlay: track_object.py
 for OBJ_NAME in "${OBJECT_NAMES[@]}"; do
@@ -259,7 +322,7 @@ done
 
 # ──────────────── Step 4: Optimize translation/scale & visualize ──────
 cd "$SCRIPTS_DIR"
-conda activate "$ENV_SAM3D"
+activate_conda_env "$ENV_SAM3D"
 
 for OBJ_NAME in "${OBJECT_NAMES[@]}"; do
     OBJECT_ID="${OBJ_NAME// /_}"
