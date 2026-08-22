@@ -44,6 +44,18 @@ cd "$(git rev-parse --show-toplevel)"
   --output-dir isaac_export/outputs/<task>
 ```
 
+When the checkout is read-only, set a writable default once in the shell:
+
+```bash
+export DO_AS_I_DO_ISAAC_EXPORT_OUTPUT_DIR=/data/<user>/do-as-i-do-runs/isaac_export/whisking
+./isaac_export/run_pipeline.sh export
+```
+
+Output selection follows this priority: an explicit `--output-dir`, then
+`DO_AS_I_DO_ISAAC_EXPORT_OUTPUT_DIR`, then the repository-local bundled-demo
+default. The project keeps the single `run_pipeline.sh` entry point; no separate
+machine-local wrapper is required.
+
 Warmup frames are skipped by default. Use `--include-warmup` to retain them;
 they are then marked `false` in `valid_mask`. Use `--trajectory
 trajectory_kinematic.npz` for an IK comparison export. Its own `frequency`

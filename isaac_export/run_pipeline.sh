@@ -25,10 +25,29 @@ Usage:
   ./isaac_export/run_pipeline.sh replay [REPLAY_ARGS...]
 
 With no action, arguments are passed to the standard export command.
+Set DO_AS_I_DO_ISAAC_EXPORT_OUTPUT_DIR to change the default export output;
+an explicit --output-dir argument always takes priority.
 EOF
         exit 0
         ;;
 esac
+
+DEFAULT_OUTPUT_DIR="${DO_AS_I_DO_ISAAC_EXPORT_OUTPUT_DIR:-}"
+if [[ "$ACTION" == "export" && -n "$DEFAULT_OUTPUT_DIR" ]]; then
+    HAS_OUTPUT_DIR_ARG=0
+    for _arg in "$@"; do
+        if [[ "$_arg" == --output-dir || "$_arg" == --output-dir=* ]]; then
+            HAS_OUTPUT_DIR_ARG=1
+            break
+        fi
+    done
+    if [[ "$HAS_OUTPUT_DIR_ARG" -eq 0 ]]; then
+        mkdir -p "$DEFAULT_OUTPUT_DIR"
+        set -- --output-dir "$DEFAULT_OUTPUT_DIR" "$@"
+    fi
+    unset HAS_OUTPUT_DIR_ARG
+    unset _arg
+fi
 
 PYTHON_CANDIDATES=(
     "${ISAAC_PYTHON:-}"

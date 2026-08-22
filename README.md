@@ -172,6 +172,11 @@ cd "$(git rev-parse --show-toplevel)"
 - `quality_report.json`：有限值、四元数、跳变、关节限位和时间连续性检查；
 - `environment_report.json`：当前机器能否执行 USD 转换、Isaac 回放和无头渲染。
 
+如果 Git checkout 不可写，可以设置
+`DO_AS_I_DO_ISAAC_EXPORT_OUTPUT_DIR=/data/<user>/do-as-i-do-runs/isaac_export/<task>`
+改变默认输出位置。命令行显式传入的 `--output-dir` 优先级更高；项目仍只使用
+统一的 `isaac_export/run_pipeline.sh` 入口。
+
 导出其他右手 Sharpa 任务时只需要更换运行目录：
 
 ```bash
