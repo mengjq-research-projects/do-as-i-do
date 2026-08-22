@@ -21,42 +21,94 @@ reconstruction/
 - An NVIDIA GPU with ≥ 32 GB VRAM.
 - HuggingFace auth with access to the repos `facebook/sam-3d-objects` and `facebook/sam3`; Plus a MANO download
   (https://mano.is.tue.mpg.de) for HaWoR.
-- SAM 3 segmentation is implemented with a click-based GUI needing an X display
-  (`config/paths.sh` sets `SAM3_DISPLAY=:1`; on a headless host, use forwarding or try text based prompting).
+- Interactive SAM3 clicking requires a working X server and `DISPLAY`. On a
+  headless server, pass pixel coordinates as the fifth argument instead; this
+  avoids any GUI requirement.
 
 ## Setup (one time)
 
+To prepare the complete repository from its root, use the one-shot setup entry:
+
 ```bash
-GIT_LFS_SKIP_SMUDGE=1 git clone --recurse-submodules https://github.com/malik-group/do-as-i-do.git
-cd do-as-i-do/reconstruction
-./setup/00_init_submodules.sh                 # only needed if you didn't clone with recursive submodules
-./setup/01_create_envs.sh                     # FALLBACK build of all 4 envs (sam3, sam3d, hawor, tapnet) — prefer each fork's own setup, see "Setting up the conda envs" below
-./setup/02_fetch_weights.sh --download        # fetch weights (needs hf auth)
+cd do-as-i-do
+./setup_all.sh --managed-offline
 ```
-**Setting up the conda envs.** The recommended route is to build each env by following
-its fork's own setup instructions (the repos vendored under `modules/`):
 
-- `sam3`  → [malik-group/sam3](https://github.com/malik-group/sam3) (`modules/sam3`)
-- `sam3d` → [malik-group/sam-3d-objects](https://github.com/malik-group/sam-3d-objects) (`modules/sam-3d-objects`, see its `doc/setup.md`) 
-- `hawor` → [malik-group/HaWoR](https://github.com/malik-group/HaWoR) (`modules/HaWoR`)
-- `tapnet` → [malik-group/tapnet](https://github.com/malik-group/tapnet) (`modules/tapnet`)
-
-See [`env/README.md`](env/README.md) for the per-env cu128 recipes (or `./setup/01_create_envs.sh` to script them).
-
-After the `sam3d` env is built, two manual Stage-2 steps are needed: un-shadow the repo's
-`notebook/` package (`pip uninstall -y notebook`) and build the Mip-Splatting
-`diff_gaussian_rasterization` for the renderer's `inria` backend. Commands in
-[`env/README.md`](env/README.md).
-
-Review `config/paths.sh`.
+This restores and verifies all four Reconstruction environments, model weights,
+offline sources, Retargeting, and Isaac. It also prepares the runtime links, so
+no additional setup command is required. MANO remains a separately licensed
+manual asset. See [`../ENVIRONMENT.md`](../ENVIRONMENT.md).
 
 
 ## Run
 
 ```bash
-./run_pipeline.sh VIDEO_PATH [FRAME_N] [OBJECT] [ANCHOR_HAND]
-# e.g.
-./run_pipeline.sh whisking/whisking.mp4 125 whisk right
+./run_pipeline.sh VIDEO_PATH [FRAME_N] [OBJECT] [ANCHOR_HAND] [OBJECT_POINTS] [POINT_LABELS] [VIEWPOINT] [CAMERA_MOTION]
+# Bundled headless example: positive point inside the whisk on frame 125.
+./run_pipeline.sh whisking/whisking.mp4 125 whisk right "584,529" "1"
+```
+
+`584,529` is the object point in pixel coordinates and `1` marks it as a
+positive point. This is the default documented path because it works without a
+GUI or X server. Interactive clicking remains available when a working
+`DISPLAY` is explicitly configured.
+
+### A new video from scratch
+
+Keep generated datasets outside the Git checkout. From the repository root:
+
+```bash
+source dependency_management/activate.sh
+mkdir -p /data/jiaqimeng/do-as-i-do-runs/cup_demo
+cp /path/to/my_demo.mp4 /data/jiaqimeng/do-as-i-do-runs/cup_demo/input.mp4
+
+VIDEO=/data/jiaqimeng/do-as-i-do-runs/cup_demo/input.mp4
+FRAME_N=100  # zero-based; choose a clear frame containing the hand and object
+
+"$ENV_SAM3/bin/ffmpeg" -y -i "$VIDEO" \
+  -vf "select=eq(n\,${FRAME_N})" \
+  -frames:v 1 -update 1 \
+  /data/jiaqimeng/do-as-i-do-runs/cup_demo/reference.png
+```
+
+Open `reference.png` through VS Code Remote or copy it to a local image viewer,
+then choose a pixel inside the object. Run the pipeline with that point:
+
+```bash
+cd ~/projects/do-as-i-do/reconstruction
+CUDA_VISIBLE_DEVICES=3 PYTHONUNBUFFERED=1 ./run_pipeline.sh \
+  /data/jiaqimeng/do-as-i-do-runs/cup_demo/input.mp4 \
+  100 cup right "620,410" "1" ego moving
+```
+
+`VIEWPOINT` is `ego`, `exo`, or `auto`; `CAMERA_MOTION` is `moving`, `static`,
+or `auto`. Both values are written to `config.json` and passed through the
+later stages. They describe the capture and do not directly select a robot IK
+branch or fixed workspace. The currently validated HaWoR path still uses its
+static-camera compatibility mode even when `moving` is recorded; full
+per-frame camera/gravity compensation remains future work.
+
+Frame indices are zero-based. Coordinates and labels are semicolon-separated;
+label `1` is a positive object point and `0` excludes an area, for example
+`"620,410;80,80" "1;0"`. Pick a reference frame with a sharp, visible object,
+a visible anchor hand, and as little occlusion as possible. Avoid cuts and large
+camera motion because the current HaWoR invocation assumes a static camera.
+Select a free physical GPU with `nvidia-smi` and set `CUDA_VISIBLE_DEVICES` for
+the command. The script respects that explicit selection and defaults to GPU 0
+when the variable is unset.
+
+The high-quality Fast-SAM3D stage evaluates 25 pose samples and a render-compare
+optimization for every frame. On the current A100, a roughly 138-frame clip
+normally spends 1.5--2 hours in this stage, scaling approximately linearly with
+the number of frames. Stage 3 does not currently resume from a partial frame;
+do not interrupt it. Complete SAM3 masks and HaWoR results are reused on a
+rerun, but later tracking stages are recomputed.
+
+For an uncached video, HaWoR also requires licensed `MANO_LEFT.pkl` and
+`MANO_RIGHT.pkl` files. An authorized user installs them outside Git at:
+
+```text
+/data/jiaqimeng/retargeting_dev/current/assets/licensed/mano/
 ```
 
 ### Details on Pipeline Stages
@@ -99,11 +151,10 @@ ffmpeg -i "$VIDEO_DIR/whisking.mp4" -vsync 0 -start_number 0 "$VIDEO_DIR/all_fra
 Then launch the viewer:
 
 ```bash
-conda activate sam3d
 VIDEO_DIR=whisking
 OBJECT_ID=whisk
 LAYOUT_JSON_OPT="$VIDEO_DIR/obj_tracking_out/$OBJECT_ID/combined_visualization/layout_camera_frame_optimized.json"
-python scripts/visualize_3d.py \
+./run_visualize.sh \
     --frames-dir "$VIDEO_DIR/all_frames" \
     --layout-json "$LAYOUT_JSON_OPT" \
     --mesh "$VIDEO_DIR/video_segmentation/masks/frame_000125_masks/$OBJECT_ID/$OBJECT_ID.obj" \
@@ -121,9 +172,8 @@ acknowledge the original authors.
 
 | fork | upstream @ pinned commit | fork commit | license |
 |---|---|---|---|
-| `malik-group/sam-3d-objects` | facebookresearch/sam-3d-objects @ `81a8237` | `875b010` | SAM License (Meta) |
-| `malik-group/Fast-SAM3D`     | wlfeng0509/Fast-SAM3D @ `c0f99e8`           | `823d478` | MIT (+ embedded SAM-3D under SAM License) |
-| `malik-group/HaWoR`          | ThunderVVV/HaWoR @ `de90272`                | `2c3fa0c` | CC BY-NC-ND 4.0 |
+| `mengjq-research-projects/sam-3d-objects` | malik-group/sam-3d-objects @ `875b010` | `9d760eb` | SAM License (Meta) |
+| `mengjq-research-projects/Fast-SAM3D` | malik-group/Fast-SAM3D @ `823d478` | `0aa377f` | MIT (+ embedded SAM-3D under SAM License) |
+| `mengjq-research-projects/HaWoR` | malik-group/HaWoR @ `2c3fa0c`           | `64c4646` | CC BY-NC-ND 4.0 |
 | `malik-group/tapnet`         | google-deepmind/tapnet @ `96d3f84`          | `f2f8888` | Apache-2.0 |
 | `malik-group/sam3`           | facebookresearch/sam3 @ `757bbb0`           | `b8e18f5` | SAM License (Meta) |
-

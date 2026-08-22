@@ -15,6 +15,7 @@ import argparse
 import glob
 import json
 import os
+import sys
 import time
 
 import mediapy as media
@@ -25,6 +26,32 @@ import torch.nn.functional as F
 from tapnet.torch import tapir_model
 from tapnet.utils import transforms
 from tapnet.utils import viz_utils
+
+
+def _enable_mediapy_ffmpeg9_compat() -> None:
+    """Translate mediapy's removed FFmpeg -vsync option to -fps_mode."""
+    env_ffmpeg = os.path.join(sys.prefix, "bin", "ffmpeg")
+    if os.path.isfile(env_ffmpeg):
+        media.set_ffmpeg(env_ffmpeg)
+
+    run_ffmpeg = getattr(media, "_run_ffmpeg", None)
+    if run_ffmpeg is None:
+        return
+
+    def run_ffmpeg_compat(ffmpeg_args, *args, **kwargs):
+        ffmpeg_args = list(ffmpeg_args)
+        while "-vsync" in ffmpeg_args:
+            index = ffmpeg_args.index("-vsync")
+            mode = ffmpeg_args[index + 1]
+            if mode == "0":
+                mode = "passthrough"
+            ffmpeg_args[index:index + 2] = ["-fps_mode", mode]
+        return run_ffmpeg(ffmpeg_args, *args, **kwargs)
+
+    media._run_ffmpeg = run_ffmpeg_compat
+
+
+_enable_mediapy_ffmpeg9_compat()
 
 # NOTE: do NOT sys.path.append("…/tapnet-src/tapnet") here — that dir contains a
 # `torch/` subdir which shadows the real PyTorch package and breaks all torch

@@ -12,6 +12,7 @@ from pathlib import Path
 import loguru
 import tyro
 
+from retargeting.capture_metadata import write_capture_metadata
 from retargeting.config import Config, filter_config_fields, load_config_yaml
 from retargeting.pipeline.decompose_mesh import main as decompose_mesh
 from retargeting.pipeline.generate_scene import main as generate_scene
@@ -149,6 +150,9 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         force=cfg.force,
         show_viewer=cfg.show_viewer,
     )
+
+    capture_path = write_capture_metadata(cfg.raw_dir, config.output_dir)
+    loguru.logger.info(f"Saved capture metadata → {capture_path}")
 
     # Stage 4.5: resolve scene_ik.xml -> scene.xml (+ scene_eq.xml).
     resolve_scene_pedestal(
