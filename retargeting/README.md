@@ -72,6 +72,8 @@ cd ~/projects/do-as-i-do
 - `outputs/mano/{hand}/{task}/0/trajectory_keypoints.npz`：清理后的参考关键点轨迹（阶段 1）
 - `outputs/assets/objects/{object}/`：物体网格和凸分解结果（阶段 1-2）
 - `outputs/{robot}/{hand}/{task}/0/scene.xml`：生成的 MuJoCo 场景（阶段 3-4.5）
+- `outputs/{robot}/{hand}/{task}/0/capture_metadata.json`：从 Reconstruction
+  透传的 `ego/exo` 与 `moving/static` 相机元数据，供 Deployment 使用
 - `outputs/{robot}/{hand}/{task}/0/trajectory_kinematic.npz`：IK 轨迹（阶段 4）
 - `outputs/{robot}/{hand}/{task}/0/trajectory_mjwp.npz` 与 `config.yaml`：优化后的轨迹，以及本次运行解析后的配置（阶段 5）；逐步 tracking error 指标也会存储在 `.npz` 中
 
@@ -99,6 +101,20 @@ cd ~/projects/do-as-i-do
 - `--no-skip-warmup`：包含前面的 warmup / settling 帧，默认会跳过
 - `--port N`：viser 端口，默认 `8081`
 - `--scene scene.xml --traj trajectory_mjwp.npz`：显式指定场景和轨迹文件
+- `--camera-mode ego|scene|auto`：选择第一视角或普通场景相机；`auto` 根据
+  `viewpoint` 元数据选择
+- `--viewpoint ego|exo|auto`：覆盖输入视角元数据
+
+统一 Deployment 入口还支持 `--render-mode auto|hand-only|full-arm`。其中
+`hand-only` 就是调用本 viewer，显示自由根 Sharpa 手与物体；`full-arm` 才会
+继续求解 UR3e 机械臂 IK：
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+./deployment/run_pipeline.sh mujoco-replay \
+  --viewpoint ego --render-mode hand-only \
+  --traj retargeting/outputs/sharpa/right/<task>/<id>/trajectory_mjwp.npz
+```
 
 仓库内附带的 `whisking` 示例可以直接运行，不需要先重新跑完整流水线；并且 **三层内容都可以正常显示**，因为它已经打包了 viewer 所需的全部资源：
 

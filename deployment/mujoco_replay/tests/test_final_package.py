@@ -55,10 +55,12 @@ class FinalPackageTest(unittest.TestCase):
                 workspace_yaw_deg=0.0,
                 workspace_pitch_deg=0.0,
                 workspace_roll_deg=0.0,
+                ik_seed_qpos=np.zeros(6),
                 side="right",
                 source_traj=directory / "source.npz",
                 object_mesh=mesh,
                 object_texture=None,
+                capture_metadata={"viewpoint": "ego", "camera_motion": "moving"},
             )
             self.assertTrue(output.is_file())
             self.assertTrue(manifest.is_file())
@@ -69,6 +71,7 @@ class FinalPackageTest(unittest.TestCase):
                 np.testing.assert_array_equal(
                     data["valid_mask"], [False, False, True, True]
                 )
+                self.assertEqual(str(data["capture_viewpoint"]), "ego")
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ fi
 case "${1:-}" in
     mujoco-replay)
         ACTION="$1"
-        ENTRYPOINT="$HERE/mujoco_replay/replay_retarget.py"
+        ENTRYPOINT="$HERE/mujoco_replay/replay_dispatch.py"
         shift
         ;;
     validate-package)
@@ -35,7 +35,7 @@ case "${1:-}" in
     *)
         cat <<'EOF'
 Usage:
-  ./deployment/run_pipeline.sh mujoco-replay [REPLAY_ARGS...]
+  ./deployment/run_pipeline.sh mujoco-replay [--render-mode auto|hand-only|full-arm] [REPLAY_ARGS...]
   ./deployment/run_pipeline.sh validate-package PACKAGE_DIR
   ./deployment/run_pipeline.sh robot-replay [ROBOT_ARGS...]
   ./deployment/run_pipeline.sh home [HOME_ARGS...]

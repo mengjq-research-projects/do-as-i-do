@@ -30,6 +30,7 @@ python dual_ur3e/replay_retarget.py --side left --traj .../trajectory_mjwp.npz -
 from __future__ import annotations
 
 import argparse
+import json
 import time
 from pathlib import Path
 
@@ -77,10 +78,46 @@ PRESET_FRONT_OF_ARM = {
     },
 }
 DEFAULT_START_FRAME = 600
+CAPTURE_METADATA_FILENAME = "capture_metadata.json"
 
 # Filename written by the GUI "Save retarget" button — also the name we
 # look for when auto-detecting a reference file next to the input traj.
 RETARGET_FILENAME = TRAJECTORY_FILENAME
+
+
+def _load_capture_metadata(path: Path) -> dict[str, str]:
+    """Load the Retargeting sidecar, falling back to legacy ``auto`` values."""
+    metadata_path = path.resolve().parent / CAPTURE_METADATA_FILENAME
+    metadata = {"viewpoint": "auto", "camera_motion": "auto"}
+    if not metadata_path.is_file():
+        return metadata
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"  warning: could not read {metadata_path}: {error}")
+        return metadata
+    viewpoint = payload.get("viewpoint", "auto")
+    camera_motion = payload.get("camera_motion", "auto")
+    if viewpoint in {"auto", "ego", "exo"}:
+        metadata["viewpoint"] = viewpoint
+    if camera_motion in {"auto", "moving", "static"}:
+        metadata["camera_motion"] = camera_motion
+    return metadata
+
+
+def _resolve_capture_metadata(args: argparse.Namespace) -> dict[str, str]:
+    """Resolve CLI overrides over the sidecar and report the observation type."""
+    metadata = _load_capture_metadata(args.traj)
+    if args.viewpoint is not None:
+        metadata["viewpoint"] = args.viewpoint
+    if args.camera_motion is not None:
+        metadata["camera_motion"] = args.camera_motion
+    print(
+        "Capture metadata: "
+        f"viewpoint={metadata['viewpoint']}, "
+        f"camera_motion={metadata['camera_motion']}"
+    )
+    return metadata
 
 
 def _load_reference_defaults(path: Path) -> dict | None:
@@ -102,15 +139,23 @@ def _load_reference_defaults(path: Path) -> dict | None:
                 float(np.asarray(npz["workspace_roll_deg"]))
                 if "workspace_roll_deg" in npz.files else 0.0
             )
+            ik_seed = (
+                np.asarray(npz["ik_seed_qpos"], dtype=np.float64)
+                if "ik_seed_qpos" in npz.files else None
+            )
     except (OSError, KeyError, ValueError) as e:
         print(f"  warning: could not read reference {path}: {e}")
         return None
     if xyz.shape != (3,):
         print(f"  warning: reference {path} has bad workspace_xyz shape {xyz.shape}")
         return None
+    if ik_seed is not None and ik_seed.shape != (6,):
+        print(f"  warning: reference {path} has bad ik_seed_qpos shape {ik_seed.shape}")
+        ik_seed = None
     return {
         "x": float(xyz[0]), "y": float(xyz[1]), "z": float(xyz[2]),
         "yaw": yaw, "pitch": pitch, "roll": roll, "start_frame": start_frame,
+        "ik_seed_qpos": ik_seed,
     }
 
 
@@ -679,6 +724,17 @@ def _resolve_workspace_defaults(args: argparse.Namespace) -> None:
     if --reference was given (or auto-detected next to --traj). Explicit
     CLI overrides (any flag whose value is not None) win unconditionally.
     """
+    workspace_was_explicit = any(
+        value is not None
+        for value in (
+            args.workspace_x,
+            args.workspace_y,
+            args.workspace_z,
+            args.workspace_yaw,
+            args.workspace_pitch,
+            args.workspace_roll,
+        )
+    )
     ref_path: Path | None = args.reference
     auto = False
     if ref_path is None:
@@ -705,6 +761,14 @@ def _resolve_workspace_defaults(args: argparse.Namespace) -> None:
             "roll": preset["roll"], "start_frame": DEFAULT_START_FRAME,
         }
 
+    # Reuse a previously accepted package whenever one exists. Otherwise an
+    # entirely unspecified workspace is eligible for task-dependent fitting.
+    # Any explicit workspace component disables fitting, so CLI values remain
+    # authoritative and missing components only inherit their normal defaults.
+    args.auto_place_active = (
+        args.auto_place and not have_reference and not workspace_was_explicit
+    )
+
     if args.workspace_x is None:
         args.workspace_x = ref["x"]
     if args.workspace_y is None:
@@ -717,6 +781,8 @@ def _resolve_workspace_defaults(args: argparse.Namespace) -> None:
         args.workspace_pitch = ref["pitch"]
     if args.workspace_roll is None:
         args.workspace_roll = ref["roll"]
+    if args.ik_seed_qpos is None and ref.get("ik_seed_qpos") is not None:
+        args.ik_seed_qpos = ref["ik_seed_qpos"].tolist()
     args.start_frame_from_reference = have_reference and args.start_frame is None
     if args.start_frame is None:
         args.start_frame = ref["start_frame"]
@@ -725,7 +791,13 @@ def _resolve_workspace_defaults(args: argparse.Namespace) -> None:
 
 
 def main(args: argparse.Namespace) -> None:
+    if args.render_mode == "hand-only":
+        raise SystemExit(
+            "--render-mode hand-only is handled by "
+            "deployment/run_pipeline.sh mujoco-replay, not replay_retarget.py directly."
+        )
     _resolve_workspace_defaults(args)
+    capture_metadata = _resolve_capture_metadata(args)
 
     print(f"Loading retarget trajectory: {args.traj}")
     qpos = load_source_qpos(args.traj)
@@ -801,6 +873,30 @@ def main(args: argparse.Namespace) -> None:
     solved_arm_qpos = np.zeros((n_frames, 6), dtype=np.float64)
     home_arm_qpos = data.qpos[arm_qadr].copy()  # home keyframe values
 
+    def validate_arm_seed(seed: np.ndarray, label: str) -> np.ndarray:
+        seed = np.asarray(seed, dtype=np.float64)
+        if seed.shape != (6,) or not np.isfinite(seed).all():
+            raise ValueError(f"{label} must contain six finite joint angles")
+        for name, value in zip(arm_joint_names, seed, strict=True):
+            joint_id = mujoco.mj_name2id(
+                model, mujoco.mjtObj.mjOBJ_JOINT, name
+            )
+            if model.jnt_limited[joint_id]:
+                lower, upper = model.jnt_range[joint_id]
+                if not lower <= value <= upper:
+                    raise ValueError(
+                        f"{label}: {name}={value:.6f} is outside "
+                        f"[{lower:.6f}, {upper:.6f}]"
+                    )
+        return seed.copy()
+
+    initial_arm_seed = (
+        home_arm_qpos.copy()
+        if args.ik_seed_qpos is None
+        else np.asarray(args.ik_seed_qpos, dtype=np.float64)
+    )
+    initial_arm_seed = validate_arm_seed(initial_arm_seed, "--ik-seed-qpos")
+
     # Build the collision-aware mink IK solver. It wraps the full model in one
     # mink.Configuration and only ever moves the active arm.
     ik_solver = MinkArmIK(
@@ -834,6 +930,226 @@ def main(args: argparse.Namespace) -> None:
     else:
         print(f"IK backend: mink — collision avoidance OFF, gain={args.ik_gain}")
 
+    def auto_select_workspace_and_seed() -> tuple[np.ndarray, np.ndarray]:
+        """Fit the wrist path near the active arm and rank several IK branches.
+
+        Capture viewpoint is intentionally absent here. Placement depends on
+        the reconstructed metric trajectory and robot reachability, not on an
+        ``ego``/``exo`` label.
+        """
+        preset = PRESET_FRONT_OF_ARM[args.side]
+        wrist_anchor = qpos[args.start_frame, 0:3].copy()
+
+        # Center the observed path, rather than only its first frame, around a
+        # comfortable point in front of the selected arm. Sparse sampling is
+        # sufficient because this stage only proposes workspaces; IK below
+        # performs the actual feasibility ranking.
+        center_frames = np.unique(
+            np.linspace(args.start_frame, n_frames - 1, num=min(33, n_frames), dtype=int)
+        )
+        rotated_relative = []
+        for frame in center_frames:
+            spider_pos, spider_quat = _spider_root_pose(qpos[frame])
+            position, _ = _workspace_transform(
+                spider_pos - wrist_anchor,
+                spider_quat,
+                offset=np.zeros(3, dtype=np.float64),
+                yaw_deg=args.workspace_yaw,
+                pitch_deg=args.workspace_pitch,
+                roll_deg=args.workspace_roll,
+            )
+            rotated_relative.append(position)
+        relative = np.asarray(rotated_relative, dtype=np.float64)
+        path_center = 0.5 * (relative.min(axis=0) + relative.max(axis=0))
+        comfortable_center = np.array(
+            [-0.10, -0.16 if args.side == "right" else 0.16, 0.875],
+            dtype=np.float64,
+        )
+        centered = comfortable_center - path_center
+        centered[0] = np.clip(centered[0], -0.30, 0.15)
+        if args.side == "right":
+            centered[1] = np.clip(centered[1], -0.45, -0.05)
+        else:
+            centered[1] = np.clip(centered[1], 0.05, 0.45)
+        centered[2] = np.clip(centered[2], 0.65, 1.10)
+
+        raw_workspaces = [
+            centered,
+            centered + np.array([-0.05, 0.0, 0.0]),
+            centered + np.array([0.05, 0.0, 0.0]),
+            np.array(
+                [-0.15, preset["y"], preset["z"]], dtype=np.float64
+            ),
+            np.array(
+                [preset["x"], preset["y"], preset["z"]], dtype=np.float64
+            ),
+        ]
+        workspaces: list[np.ndarray] = []
+        for workspace in raw_workspaces:
+            if not any(np.allclose(workspace, item, atol=1e-6) for item in workspaces):
+                workspaces.append(workspace)
+
+        if args.ik_seed_qpos is not None:
+            seeds = [("explicit", initial_arm_seed.copy())]
+        else:
+            if args.side == "right":
+                raw_seeds = [
+                    (
+                        "elbow-in",
+                        np.array(
+                            [-np.pi / 2, -np.pi / 2, np.pi / 2,
+                             -np.pi / 2, -np.pi / 2, 0.0]
+                        ),
+                    ),
+                    ("home", home_arm_qpos.copy()),
+                    (
+                        "alternate",
+                        np.array(
+                            [-np.pi / 2, -np.pi / 2, -np.pi / 2,
+                             -np.pi / 2, np.pi / 2, 0.0]
+                        ),
+                    ),
+                ]
+            else:
+                raw_seeds = [
+                    (
+                        "elbow-in",
+                        np.array(
+                            [np.pi / 2, -np.pi / 2, -np.pi / 2,
+                             -np.pi / 2, np.pi / 2, 0.0]
+                        ),
+                    ),
+                    ("home", home_arm_qpos.copy()),
+                    (
+                        "alternate",
+                        np.array(
+                            [np.pi / 2, -np.pi / 2, np.pi / 2,
+                             -np.pi / 2, -np.pi / 2, 0.0]
+                        ),
+                    ),
+                ]
+            seeds = []
+            for label, seed in raw_seeds:
+                try:
+                    seed = validate_arm_seed(seed, f"automatic seed {label}")
+                except ValueError as error:
+                    print(f"  skipping {label} seed: {error}")
+                    continue
+                if not any(np.allclose(seed, item[1]) for item in seeds):
+                    seeds.append((label, seed))
+
+        sample_frames = np.unique(
+            np.linspace(args.start_frame, n_frames - 1, num=min(5, n_frames), dtype=int)
+        )
+        ranked: list[tuple[float, np.ndarray, str, np.ndarray, float, float, float]] = []
+        for workspace_index, workspace in enumerate(workspaces):
+            for seed_index, (seed_label, seed) in enumerate(seeds):
+                ik_solver.reset()
+                pos_errors: list[float] = []
+                rot_errors: list[float] = []
+                min_clearance = float("inf")
+                failed = False
+                for sample_index, frame in enumerate(sample_frames):
+                    spider_pos, spider_quat = _spider_root_pose(qpos[frame])
+                    root_world_pos, root_world_quat = _workspace_transform(
+                        spider_pos - wrist_anchor,
+                        spider_quat,
+                        offset=workspace,
+                        yaw_deg=args.workspace_yaw,
+                        pitch_deg=args.workspace_pitch,
+                        roll_deg=args.workspace_roll,
+                    )
+                    flange_pos, flange_quat = _flange_target_from_sharpa_root(
+                        root_world_pos, root_world_quat, mount_yaw_deg
+                    )
+                    try:
+                        _, pos_error, rot_error, _ = ik_solver.solve(
+                            flange_pos,
+                            flange_quat,
+                            qpos[frame, SPIDER_FINGER_SLICE],
+                            arm_seed=seed if sample_index == 0 else None,
+                            max_iters=max(args.ik_iters, 120),
+                        )
+                    except (FloatingPointError, RuntimeError, ValueError):
+                        failed = True
+                        break
+                    if not np.isfinite([pos_error, rot_error]).all():
+                        failed = True
+                        break
+                    pos_errors.append(float(pos_error))
+                    rot_errors.append(float(rot_error))
+                    if ik_solver.collision_limit is not None:
+                        min_clearance = min(
+                            min_clearance, float(ik_solver.min_clearance())
+                        )
+                if failed or not pos_errors:
+                    continue
+                clearance_shortfall = (
+                    0.0
+                    if not np.isfinite(min_clearance)
+                    else max(0.0, args.collision_min_dist - min_clearance)
+                )
+                # All terms are in approximately metres. Stable tiny biases
+                # prefer the earlier ergonomic branch/workspace on a true tie.
+                score = (
+                    max(pos_errors)
+                    + 0.02 * max(rot_errors)
+                    + 0.05 * float(np.mean(pos_errors))
+                    + 2.0 * clearance_shortfall
+                    + seed_index * 1e-7
+                    + workspace_index * 1e-8
+                )
+                ranked.append(
+                    (
+                        score,
+                        workspace.copy(),
+                        seed_label,
+                        seed.copy(),
+                        max(pos_errors),
+                        max(rot_errors),
+                        min_clearance,
+                    )
+                )
+
+        if not ranked:
+            print("Automatic placement found no valid candidate; using legacy preset.")
+            return (
+                np.array([preset["x"], preset["y"], preset["z"]]),
+                initial_arm_seed.copy(),
+            )
+        ranked.sort(key=lambda item: item[0])
+        print("Automatic workspace/IK selection (best candidates):")
+        for result in ranked[:3]:
+            _, workspace, label, _, pos_error, rot_error, clearance = result
+            clearance_text = (
+                "n/a" if not np.isfinite(clearance) else f"{clearance * 1000:.1f}mm"
+            )
+            print(
+                f"  xyz=({workspace[0]:.3f}, {workspace[1]:.3f}, "
+                f"{workspace[2]:.3f}) seed={label}: "
+                f"sample worst pos={pos_error * 1000:.1f}mm, "
+                f"rot={np.rad2deg(rot_error):.2f}deg, "
+                f"clearance={clearance_text}"
+            )
+        return ranked[0][1], ranked[0][3]
+
+    if args.auto_place_active:
+        selected_workspace, initial_arm_seed = auto_select_workspace_and_seed()
+        args.workspace_x, args.workspace_y, args.workspace_z = selected_workspace
+        initial_arm_seed = validate_arm_seed(
+            initial_arm_seed, "automatically selected IK seed"
+        )
+        print(
+            "Selected automatic placement: "
+            f"workspace=({args.workspace_x:.3f}, {args.workspace_y:.3f}, "
+            f"{args.workspace_z:.3f})"
+        )
+    if args.ik_seed_qpos is not None or args.auto_place_active:
+        print(
+            "IK first-frame seed (rad): "
+            + np.array2string(initial_arm_seed, precision=4)
+        )
+
     def solve_all_frames(
         wx: float, wy: float, wz: float, yaw_deg: float,
         pitch_deg: float, roll_deg: float,
@@ -856,7 +1172,11 @@ def main(args: argparse.Namespace) -> None:
         offset = np.array([wx, wy, wz], dtype=np.float64)
         wrist_anchor_spider = qpos[start_frame, 0:3].copy()
 
-        warmstart = home_arm_qpos.copy()
+        # Differential IK stays on the discrete elbow/wrist branch selected by
+        # its first-frame seed, then warmstarts each subsequent frame from the
+        # previous solution.  An explicit seed lets a task choose an ergonomic
+        # branch without changing the scene's parked/home configuration.
+        warmstart = initial_arm_seed.copy()
         worst_pos = 0.0
         worst_rot = 0.0
         start_pos_err = 0.0
@@ -994,10 +1314,12 @@ def main(args: argparse.Namespace) -> None:
             workspace_yaw_deg=yaw,
             workspace_pitch_deg=pitch,
             workspace_roll_deg=roll,
+            ik_seed_qpos=initial_arm_seed,
             side=args.side,
             source_traj=args.traj,
             object_mesh=object_mesh,
             object_texture=object_texture,
+            capture_metadata=capture_metadata,
         )
 
     if args.save_on_solve:
@@ -1023,7 +1345,8 @@ def main(args: argparse.Namespace) -> None:
     if home_id >= 0:
         mujoco.mj_resetDataKeyframe(model, data, home_id)
 
-    server = viser.ViserServer()
+    server_kwargs = {"port": args.port} if args.port is not None else {}
+    server = viser.ViserServer(**server_kwargs)
     mj_scene = ViserMujocoScene(server, model, num_envs=1)
     # Default camera-tracking shifts the entire scene so the first dynamic
     # body sits at the viewer origin — that makes our markers (which we
@@ -1360,8 +1683,32 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--traj", type=Path, default=DEFAULT_TRAJ)
     p.add_argument(
+        "--render-mode",
+        choices=("auto", "hand-only", "full-arm"),
+        default="auto",
+        help=(
+            "Output presentation selected by deployment/run_pipeline.sh: "
+            "auto maps ego to hand-only and exo/legacy input to full-arm."
+        ),
+    )
+    p.add_argument(
         "--side", choices=("right", "left"), default="right",
         help="Which arm + Sharpa hand to retarget onto (default: right).",
+    )
+    p.add_argument(
+        "--viewpoint", choices=("auto", "ego", "exo"), default=None,
+        help=(
+            "Observation viewpoint override. By default this is read from "
+            "capture_metadata.json beside --traj. It is metadata, not a "
+            "hard-coded robot workspace preset."
+        ),
+    )
+    p.add_argument(
+        "--camera-motion", choices=("auto", "moving", "static"), default=None,
+        help=(
+            "Camera-motion override. By default this is read from the "
+            "Retargeting capture metadata sidecar."
+        ),
     )
     p.add_argument(
         "--speed", type=float, default=1.0,
@@ -1370,6 +1717,10 @@ def _parse_args() -> argparse.Namespace:
             "Speed button when set to 0.25/0.5/1/2/4; other values still play. "
             "Ignored with --solve-only."
         ),
+    )
+    p.add_argument(
+        "--port", type=int, default=None,
+        help="Optional Viser server port (default: choose the library default).",
     )
     p.add_argument(
         "--reference", type=Path, default=None,
@@ -1404,6 +1755,17 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Write the final arm + fingers + object package immediately after "
             "IK. Useful together with --solve-only for headless generation."
+        ),
+    )
+    p.add_argument(
+        "--auto-place",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "When no reference package or workspace flag is supplied, fit "
+            "the task trajectory into the reachable workspace and choose an "
+            "IK seed from several candidates (default on). Use "
+            "--no-auto-place for the legacy fixed preset."
         ),
     )
     # Defaults are resolved in _resolve_workspace_defaults: reference file
@@ -1461,6 +1823,22 @@ def _parse_args() -> argparse.Namespace:
                    help="mink FrameTask Levenberg-Marquardt damping (singularity robustness).")
     p.add_argument("--posture-cost", type=float, default=1e-3,
                    help="mink PostureTask cost — weak nullspace bias toward the seed posture.")
+    p.add_argument(
+        "--ik-seed-qpos",
+        type=float,
+        nargs=6,
+        metavar=(
+            "SHOULDER_PAN", "SHOULDER_LIFT", "ELBOW",
+            "WRIST_1", "WRIST_2", "WRIST_3",
+        ),
+        default=None,
+        help=(
+            "Six arm joint angles in radians used only to seed the first IK "
+            "frame. Subsequent frames warmstart from the preceding solution. "
+            "When omitted, the scene home pose is used. This selects among "
+            "discrete elbow/wrist IK branches without moving the parked arm."
+        ),
+    )
     p.add_argument(
         "--ik-max-vel", type=float, default=1.0,
         help=(

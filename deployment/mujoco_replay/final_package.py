@@ -198,10 +198,12 @@ def save_final_package(
     workspace_yaw_deg: float,
     workspace_pitch_deg: float,
     workspace_roll_deg: float,
+    ik_seed_qpos: np.ndarray,
     side: str,
     source_traj: Path,
     object_mesh: Path | None,
     object_texture: Path | None,
+    capture_metadata: dict[str, str] | None = None,
 ) -> tuple[Path, Path, Path]:
     """Write compatible NPZ plus simulator-independent metadata and MJCF."""
     output_path = output_path.expanduser().resolve()
@@ -217,6 +219,10 @@ def save_final_package(
     timestamps = np.arange(frame_count, dtype=np.float64) * float(dt)
     source_frame_indices = np.arange(frame_count, dtype=np.int64)
     valid_mask = source_frame_indices >= int(start_frame)
+    capture_metadata = capture_metadata or {
+        "viewpoint": "auto",
+        "camera_motion": "auto",
+    }
     np.savez_compressed(
         output_path,
         arm_qpos=np.asarray(arm_qpos, dtype=np.float64),
@@ -234,8 +240,13 @@ def save_final_package(
         workspace_yaw_deg=np.float64(workspace_yaw_deg),
         workspace_pitch_deg=np.float64(workspace_pitch_deg),
         workspace_roll_deg=np.float64(workspace_roll_deg),
+        ik_seed_qpos=np.asarray(ik_seed_qpos, dtype=np.float64),
         side=str(side),
         source_traj=str(source_traj.resolve()),
+        capture_viewpoint=str(capture_metadata.get("viewpoint", "auto")),
+        capture_camera_motion=str(
+            capture_metadata.get("camera_motion", "auto")
+        ),
     )
 
     scene_path = output_path.parent / SCENE_FILENAME
@@ -279,7 +290,15 @@ def save_final_package(
             "playback_mode": "kinematic_reference",
         },
         "scene": {"mjcf": scene_path.name},
-        "source": {"trajectory": str(source_traj.resolve())},
+        "source": {
+            "trajectory": str(source_traj.resolve()),
+            "capture": {
+                "viewpoint": str(capture_metadata.get("viewpoint", "auto")),
+                "camera_motion": str(
+                    capture_metadata.get("camera_motion", "auto")
+                ),
+            },
+        },
         "timing": {
             "sim_dt_seconds": float(dt),
             "frame_count": frame_count,

@@ -130,6 +130,12 @@ Or run headless and render an MP4:
   --record-dir isaac_export/outputs/whisking/render
 ```
 
+Recording already writes PNG frames and encodes `replay.mp4` with ffmpeg. The
+current replayer uses the first camera imported from the source MJCF. Named
+camera selection and a project-wide deterministic default shot remain future
+presentation improvements; they are not required for trajectory/state
+validation.
+
 The replayer drives the six scalar wrist joints, 22 Sharpa finger joints, and
 the object world pose by name. Values outside the MJCF finger limits are clipped
 before they reach PhysX. `Ctrl+C` stops either replay mode safely.

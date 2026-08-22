@@ -37,6 +37,7 @@ import sys
 import cv2
 import numpy as np
 import trimesh
+from rtree.exceptions import RTreeError
 from scipy.spatial.transform import Rotation as R
 
 MAX_HAND_RAYS = 2000
@@ -234,21 +235,75 @@ def raycast_first_hits(verts, faces, mask, fx, fy, cx, cy, max_rays=MAX_HAND_RAY
         hit_u: (M,) pixel u of rays that hit.
         hit_v: (M,) pixel v of rays that hit.
     """
-    ys, xs = np.where(mask)
+    empty_hits = (
+        np.empty((0, 3), dtype=np.float64),
+        np.empty(0, dtype=int),
+        np.empty(0, dtype=int),
+    )
+
+    # HaWoR uses NaN vertices for frames where a hand is not reconstructed.
+    # Passing those vertices to trimesh/rtree produces non-finite AABBs and can
+    # raise ``RTreeError: minimums more than maximums``.  Remove every face that
+    # touches an invalid vertex and compact the remaining mesh before raycasting.
+    verts = np.asarray(verts, dtype=np.float64)
+    faces = np.asarray(faces, dtype=np.int64)
+    if (verts.ndim != 2 or verts.shape[1] != 3 or
+            faces.ndim != 2 or faces.shape[1] != 3):
+        return empty_hits
+
+    finite_verts = np.isfinite(verts).all(axis=1)
+    faces_in_bounds = ((faces >= 0) & (faces < len(verts))).all(axis=1)
+    valid_faces = faces[faces_in_bounds]
+    if len(valid_faces) == 0:
+        return empty_hits
+    valid_faces = valid_faces[finite_verts[valid_faces].all(axis=1)]
+    if len(valid_faces) == 0:
+        return empty_hits
+
+    used_verts = np.unique(valid_faces)
+    remap = np.full(len(verts), -1, dtype=np.int64)
+    remap[used_verts] = np.arange(len(used_verts))
+    clean_verts = verts[used_verts]
+    clean_faces = remap[valid_faces]
+
+    intrinsics = np.asarray([fx, fy, cx, cy], dtype=np.float64)
+    if not np.isfinite(intrinsics).all() or abs(fx) < 1e-12 or abs(fy) < 1e-12:
+        return empty_hits
+
+    ys, xs = np.where(np.asarray(mask, dtype=bool))
     if len(xs) == 0:
-        return np.empty((0, 3)), np.empty(0, dtype=int), np.empty(0, dtype=int)
+        return empty_hits
     if max_rays is not None and len(xs) > max_rays:
         if rng is None:
             rng = np.random.default_rng(0)
         idx = rng.choice(len(xs), size=max_rays, replace=False)
         xs, ys = xs[idx], ys[idx]
     dirs = np.stack([(xs - cx) / fx, (ys - cy) / fy, np.ones_like(xs, dtype=np.float64)], axis=1)
-    dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
+    ray_norms = np.linalg.norm(dirs, axis=1)
+    valid_rays = np.isfinite(dirs).all(axis=1) & np.isfinite(ray_norms) & (ray_norms > 1e-12)
+    if not valid_rays.any():
+        return empty_hits
+    dirs, xs, ys, ray_norms = (
+        dirs[valid_rays], xs[valid_rays], ys[valid_rays], ray_norms[valid_rays]
+    )
+    dirs /= ray_norms[:, None]
     origins = np.zeros_like(dirs)
-    tm = trimesh.Trimesh(vertices=np.asarray(verts, dtype=np.float64),
-                         faces=np.asarray(faces), process=False)
-    locations, index_ray, _ = tm.ray.intersects_location(origins, dirs, multiple_hits=False)
-    return locations, xs[index_ray], ys[index_ray]
+    tm = trimesh.Trimesh(vertices=clean_verts, faces=clean_faces, process=False)
+    try:
+        locations, index_ray, _ = tm.ray.intersects_location(
+            origins, dirs, multiple_hits=False
+        )
+    except (RTreeError, FloatingPointError, OverflowError, ValueError):
+        return empty_hits
+
+    locations = np.asarray(locations, dtype=np.float64)
+    index_ray = np.asarray(index_ray, dtype=np.int64)
+    valid_hits = (
+        np.isfinite(locations).all(axis=1)
+        & (index_ray >= 0)
+        & (index_ray < len(xs))
+    )
+    return locations[valid_hits], xs[index_ray[valid_hits]], ys[index_ray[valid_hits]]
 
 
 def compute_optimal_scale(c_rot, t_cam, target_3d):
@@ -376,6 +431,17 @@ def main():
     # Process each frame
     print(f"\nOptimizing translation_scale per frame (mesh_scale={mesh_scale:.6f})...")
     output_data = copy.deepcopy(layout_data)
+
+    # Establish the reference-scaled trajectory as the output baseline before
+    # attempting per-frame refinement.  Frames without a valid HaWoR mesh are
+    # intentionally skipped below; they must retain this baseline rather than
+    # silently falling back to the original, unscaled translation.
+    if ref_k is not None:
+        for fr in frames:
+            pose = output_data["objects"][fr["obj_index"]]["local_to_scene"]
+            pose["translation_camera_frame"] = fr["t_cam"].tolist()
+            pose["translation_scale_optimized"] = 1.0
+
     per_frame_scales = []
     skipped = 0
 

@@ -9,8 +9,8 @@
 #   3  object tracking using guided pose prediction ; project mesh ; layout -> camera frame        [sam3d]
 #   4  optimize translation/scale (+ optional viser viz)                     [sam3d]
 #
-# Usage:  ./run_pipeline.sh VIDEO_PATH [FRAME_N] [OBJECT] [ANCHOR_HAND] [OBJECT_POINTS] [POINT_LABELS]
-# Example: ./run_pipeline.sh /data/pickplan_pan/pickplan_pan.mp4 28 pan right
+# Usage:  ./run_pipeline.sh VIDEO_PATH [FRAME_N] [OBJECT] [ANCHOR_HAND] [OBJECT_POINTS] [POINT_LABELS] [VIEWPOINT] [CAMERA_MOTION]
+# Example: ./run_pipeline.sh /data/pickplan_pan/pickplan_pan.mp4 28 pan right "620,410" "1" ego moving
 set -eo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,6 +28,23 @@ OBJECT_NAMES=("${3:-pan}")
 ANCHOR_HAND="${4:-right}"
 OBJECT_POINTS="${5:-}"
 POINT_LABELS="${6:-1}"
+VIEWPOINT="${7:-auto}"
+CAMERA_MOTION="${8:-auto}"
+
+case "$VIEWPOINT" in
+    auto|ego|exo) ;;
+    *)
+        echo "ERROR: VIEWPOINT must be one of: auto, ego, exo (got '$VIEWPOINT')." >&2
+        exit 2
+        ;;
+esac
+case "$CAMERA_MOTION" in
+    auto|moving|static) ;;
+    *)
+        echo "ERROR: CAMERA_MOTION must be one of: auto, moving, static (got '$CAMERA_MOTION')." >&2
+        exit 2
+        ;;
+esac
 
 # ──────────────────────────── Derived paths ────────────────────────────
 VIDEO_DIR="$(dirname "$VIDEO_PATH")"
@@ -92,11 +109,18 @@ OBJ_ARRAY=$(printf ', "%s"' "${OBJECT_NAMES[@]}")
 OBJ_ARRAY="[${OBJ_ARRAY:2}]"
 cat > "$VIDEO_DIR/config.json" <<EOF
 {
+    "schema_version": 2,
     "frame_number": $n,
     "object_names": $OBJ_ARRAY,
-    "anchor_hand": "$ANCHOR_HAND"
+    "anchor_hand": "$ANCHOR_HAND",
+    "capture": {
+        "viewpoint": "$VIEWPOINT",
+        "camera_motion": "$CAMERA_MOTION"
+    }
 }
 EOF
+
+echo "Capture metadata: viewpoint=$VIEWPOINT, camera_motion=$CAMERA_MOTION"
 
 ffmpeg -y -i "$VIDEO_PATH" -vf "select=eq(n\,${n})" \
     -fps_mode passthrough -frames:v 1 -update 1 "$FRAME_PATH"
@@ -240,6 +264,11 @@ else
     activate_conda_env "$ENV_HAWOR"
     cd "$HAWOR_DIR"                              # patched: demo.py
     IMG_FOCAL=$(head -n 1 "$INTRINSICS_PATH")
+    if [[ "$CAMERA_MOTION" == "moving" ]]; then
+        echo "NOTE: camera_motion=moving is preserved as metadata, but HaWoR currently" \
+             "uses its validated static-camera compatibility path. Dynamic-camera" \
+             "rotation/gravity compensation remains a separate pipeline stage."
+    fi
     python demo.py \
         --video_path "$VIDEO_PATH" \
         --vis_mode cam \

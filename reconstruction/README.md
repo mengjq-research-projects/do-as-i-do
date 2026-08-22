@@ -43,7 +43,7 @@ manual asset. See [`../ENVIRONMENT.md`](../ENVIRONMENT.md).
 ## Run
 
 ```bash
-./run_pipeline.sh VIDEO_PATH [FRAME_N] [OBJECT] [ANCHOR_HAND] [OBJECT_POINTS] [POINT_LABELS]
+./run_pipeline.sh VIDEO_PATH [FRAME_N] [OBJECT] [ANCHOR_HAND] [OBJECT_POINTS] [POINT_LABELS] [VIEWPOINT] [CAMERA_MOTION]
 # Bundled headless example: positive point inside the whisk on frame 125.
 ./run_pipeline.sh whisking/whisking.mp4 125 whisk right "584,529" "1"
 ```
@@ -78,8 +78,15 @@ then choose a pixel inside the object. Run the pipeline with that point:
 cd ~/projects/do-as-i-do/reconstruction
 CUDA_VISIBLE_DEVICES=3 PYTHONUNBUFFERED=1 ./run_pipeline.sh \
   /data/jiaqimeng/do-as-i-do-runs/cup_demo/input.mp4 \
-  100 cup right "620,410" "1"
+  100 cup right "620,410" "1" ego moving
 ```
+
+`VIEWPOINT` is `ego`, `exo`, or `auto`; `CAMERA_MOTION` is `moving`, `static`,
+or `auto`. Both values are written to `config.json` and passed through the
+later stages. They describe the capture and do not directly select a robot IK
+branch or fixed workspace. The currently validated HaWoR path still uses its
+static-camera compatibility mode even when `moving` is recorded; full
+per-frame camera/gravity compensation remains future work.
 
 Frame indices are zero-based. Coordinates and labels are semicolon-separated;
 label `1` is a positive object point and `0` excludes an area, for example

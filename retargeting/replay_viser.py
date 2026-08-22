@@ -42,6 +42,7 @@ Then open http://localhost:<port> and use the Frame slider / Play button.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import threading
 import time
@@ -71,12 +72,117 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--port", type=int, default=8081, help="Viser server port.")
     p.add_argument("--fps", type=float, default=60.0, help="Initial playback FPS.")
     p.add_argument(
+        "--viewpoint",
+        choices=("auto", "ego", "exo"),
+        default=None,
+        help=(
+            "Input observation viewpoint. By default read from "
+            "capture_metadata.json beside the trajectory."
+        ),
+    )
+    p.add_argument(
+        "--camera-motion",
+        choices=("auto", "moving", "static"),
+        default=None,
+        help=(
+            "Input camera motion metadata. This does not synthesize missing "
+            "per-frame camera extrinsics."
+        ),
+    )
+    p.add_argument(
+        "--camera-mode",
+        choices=("auto", "ego", "scene"),
+        default="auto",
+        help=(
+            "Viewer camera preset. auto selects ego for ego input and the "
+            "ordinary scene camera otherwise."
+        ),
+    )
+    p.add_argument(
+        "--ego-fov",
+        type=float,
+        default=60.0,
+        help="Vertical field of view in degrees for the ego camera preset.",
+    )
+    p.add_argument(
         "--skip-warmup",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Drop the leading warmup frames (default: skip).",
     )
     return p.parse_args()
+
+
+def _load_capture_metadata(run_dir: Path, keypoints_path: Path | None) -> dict[str, str]:
+    """Load capture metadata with compatibility for older processed runs."""
+    metadata = {"viewpoint": "auto", "camera_motion": "auto"}
+    sidecar = run_dir / "capture_metadata.json"
+    if sidecar.is_file():
+        try:
+            payload = json.loads(sidecar.read_text(encoding="utf-8"))
+            for key in metadata:
+                value = payload.get(key)
+                if isinstance(value, str):
+                    metadata[key] = value
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    if keypoints_path is not None and keypoints_path.is_file():
+        try:
+            with np.load(str(keypoints_path), allow_pickle=False) as data:
+                for key, npz_key in (
+                    ("viewpoint", "capture_viewpoint"),
+                    ("camera_motion", "capture_camera_motion"),
+                ):
+                    if metadata[key] == "auto" and npz_key in data.files:
+                        metadata[key] = str(np.asarray(data[npz_key]).item())
+        except (OSError, ValueError):
+            pass
+    if metadata["viewpoint"] not in {"auto", "ego", "exo"}:
+        metadata["viewpoint"] = "auto"
+    if metadata["camera_motion"] not in {"auto", "moving", "static"}:
+        metadata["camera_motion"] = "auto"
+    return metadata
+
+
+def _ego_camera_preset(
+    qpos: np.ndarray,
+    start: int,
+    keypoints_path: Path | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return a stable camera origin and look-at target in Retargeting world space."""
+    roots = np.asarray(qpos[start:, :3], dtype=np.float64)
+    roots = roots[np.all(np.isfinite(roots), axis=1)]
+    target = np.median(roots, axis=0) if len(roots) else np.zeros(3)
+    origin: np.ndarray | None = None
+
+    if keypoints_path is not None and keypoints_path.is_file():
+        try:
+            with np.load(str(keypoints_path), allow_pickle=False) as data:
+                if "camera_origin_world" in data.files:
+                    candidate = np.asarray(data["camera_origin_world"], dtype=np.float64)
+                    if candidate.shape == (3,) and np.all(np.isfinite(candidate)):
+                        origin = candidate
+                elif "centering_offset" in data.files:
+                    # Older output did not persist world_offset. Its x/y exactly
+                    # equal centering_offset x/y; choose camera height relative
+                    # to the visible hand because the old floor-lift z is absent.
+                    centering = np.asarray(data["centering_offset"], dtype=np.float64)
+                    if centering.shape == (3,) and np.all(np.isfinite(centering)):
+                        origin = np.array(
+                            [-centering[0], -centering[1], target[2] + 0.12],
+                            dtype=np.float64,
+                        )
+        except (OSError, ValueError):
+            pass
+
+    if origin is None or not np.all(np.isfinite(origin)):
+        # Last-resort presentation preset for legacy/custom run layouts.
+        origin = target + np.array([0.0, -0.45, 0.12])
+    distance = float(np.linalg.norm(target - origin))
+    if not np.isfinite(distance) or distance < 0.10:
+        origin = target + np.array([0.0, -0.45, 0.12])
+    return origin, target
 
 
 def _load_run_config(config_yaml: Path) -> dict:
@@ -275,6 +381,13 @@ def main() -> None:
     if n_frames <= 0:
         raise SystemExit("No frames to play.")
 
+    capture = _load_capture_metadata(run_dir, keypoints_path)
+    viewpoint = args.viewpoint or capture["viewpoint"]
+    camera_motion = args.camera_motion or capture["camera_motion"]
+    camera_mode = args.camera_mode
+    if camera_mode == "auto":
+        camera_mode = "ego" if viewpoint == "ego" else "scene"
+
     def ref_frame_for(display_idx: int) -> int:
         """Map a display frame to the kinematic/MANO reference frame index."""
         sim_i = display_idx + start
@@ -287,6 +400,24 @@ def main() -> None:
         spec, model, xml_path=scene_path,
         build_ref=kin_qpos is not None, build_gui=False,
     )
+
+    ego_camera = None
+    if camera_mode == "ego":
+        camera_position, camera_target = _ego_camera_preset(qpos, start, keypoints_path)
+        ego_camera = (camera_position, camera_target)
+
+        def apply_ego_camera(client) -> None:
+            client.camera.position = camera_position
+            client.camera.look_at = camera_target
+            client.camera.up_direction = np.array([0.0, 0.0, 1.0])
+            client.camera.fov = np.deg2rad(args.ego_fov)
+
+        @server.on_client_connect
+        def _set_ego_camera(client) -> None:
+            apply_ego_camera(client)
+
+        for client in server.get_clients().values():
+            apply_ego_camera(client)
 
     mano = (
         ManoOverlay(keypoints_path, outputs_root, task)
@@ -319,7 +450,9 @@ def main() -> None:
             cb_mano = server.gui.add_checkbox("MANO reference (orange)", initial_value=True)
         if kin_qpos is not None:
             cb_ik = server.gui.add_checkbox("IK reference (blue)", initial_value=True)
-        cb_robot = server.gui.add_checkbox("Retargeted robot", initial_value=True)
+        cb_robot = server.gui.add_checkbox(
+            "Retargeted Sharpa hand + object", initial_value=True
+        )
 
     frame_slider = server.gui.add_slider(
         "Frame", min=0, max=n_frames - 1, step=1, initial_value=0
@@ -394,6 +527,22 @@ def main() -> None:
     print(f"Retargeted:  {traj_path}")
     print(f"IK ref:      {kin_path if kin_qpos is not None else 'not found'}")
     print(f"MANO ref:    {keypoints_path if mano is not None else 'not found'}")
+    print(
+        "Presentation: hand-only "
+        f"(viewpoint={viewpoint}, camera_motion={camera_motion}, camera={camera_mode})"
+    )
+    if ego_camera is not None:
+        camera_position, camera_target = ego_camera
+        print(
+            "Ego camera:  position="
+            f"{np.round(camera_position, 4).tolist()}, "
+            f"look_at={np.round(camera_target, 4).tolist()}"
+        )
+    if camera_motion == "moving":
+        print(
+            "NOTE: this replay uses one stabilized ego camera. Per-frame camera "
+            "extrinsics are not produced by the current reconstruction pipeline."
+        )
     print(
         f"Playing {n_frames} frames"
         + (f" (skipped {start} warmup frames; --no-skip-warmup to include)" if start else "")

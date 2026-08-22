@@ -14,6 +14,7 @@ import loguru
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
+from retargeting.capture_metadata import normalize_capture_metadata
 from retargeting.utils.in_hand import (
     compute_in_hand_mask,
     find_freeze_indices,
@@ -47,6 +48,42 @@ CLEAN_CONFIG = {
 # Post-processing of the shared mask (after OR across all signals).
 SHARED_GAP_MERGE = 1
 SHARED_MAX_BURST = 10
+
+
+def _finite_frame_mask(*arrays: np.ndarray) -> np.ndarray:
+    """Return frames whose values are finite in every supplied array.
+
+    HaWoR can emit NaN joints, vertices, translations, or shape coefficients
+    for frames where no hand was reconstructed while still setting its
+    ``*_valid`` flag to True.  Retargeting must treat numerical validity as an
+    additional hard requirement before spike detection and interpolation.
+    """
+    if not arrays:
+        raise ValueError("_finite_frame_mask requires at least one array")
+    n_frames = np.asarray(arrays[0]).shape[0]
+    finite = np.ones(n_frames, dtype=bool)
+    for array in arrays:
+        array = np.asarray(array)
+        if array.shape[0] != n_frames:
+            raise ValueError(
+                f"Per-frame array length mismatch: expected {n_frames}, "
+                f"got {array.shape[0]}"
+            )
+        finite &= np.isfinite(array.reshape(n_frames, -1)).all(axis=1)
+    return finite
+
+
+def _require_finite(name: str, array: np.ndarray) -> None:
+    """Fail early with a useful message if interpolation left invalid data."""
+    if np.isfinite(array).all():
+        return
+    bad_frames = np.flatnonzero(
+        ~np.isfinite(array.reshape(array.shape[0], -1)).all(axis=1)
+    )
+    raise ValueError(
+        f"{name} remains non-finite after cleaning at frames "
+        f"{bad_frames[:20].tolist()}"
+    )
 
 
 def _runs(mask: np.ndarray) -> list[tuple[int, int]]:
@@ -426,7 +463,7 @@ def main(
 
     if process_right:
         right_joints = meshes["right_joints"].copy()      # (N, 21, 3) in camera space
-        right_valid_mask = meshes["right_valid"]           # (N,) bool
+        right_valid_mask = np.asarray(meshes["right_valid"], dtype=bool).copy()
         right_rot = meshes["right_rot"].copy()             # (N, 3) MANO global_orient
         right_vertices = meshes["right_vertices"].astype(np.float64)   # (N, 778, 3)
         right_faces = meshes["right_faces"].astype(np.int32)           # (1552, 3)
@@ -435,16 +472,36 @@ def main(
         right_hand_pose = meshes["right_hand_pose"].astype(np.float64) # (N, 45)
         right_betas = meshes["right_betas"].astype(np.float64)         # (N, 10)
         N = right_joints.shape[0]
+        right_finite_mask = _finite_frame_mask(
+            right_joints, right_vertices, right_rot, right_hand_pose, right_betas
+        )
+        mislabeled = right_valid_mask & ~right_finite_mask
+        if mislabeled.any():
+            loguru.logger.warning(
+                f"HaWoR right_valid marked {int(mislabeled.sum())} non-finite "
+                "frames as valid; forcing interpolation."
+            )
+        right_valid_mask &= right_finite_mask
 
     if process_left:
         left_joints = meshes["left_joints"].copy()        # (N, 21, 3) in camera space
-        left_valid_mask = meshes["left_valid"]             # (N,) bool
+        left_valid_mask = np.asarray(meshes["left_valid"], dtype=bool).copy()
         left_rot = meshes["left_rot"].copy()               # (N, 3) MANO global_orient
         left_vertices = meshes["left_vertices"].astype(np.float64)     # (N, 778, 3)
         left_faces = meshes["left_faces"].astype(np.int32)             # (1552, 3)
         left_hand_pose = meshes["left_hand_pose"].astype(np.float64)   # (N, 45)
         left_betas = meshes["left_betas"].astype(np.float64)           # (N, 10)
         N = left_joints.shape[0]
+        left_finite_mask = _finite_frame_mask(
+            left_joints, left_vertices, left_rot, left_hand_pose, left_betas
+        )
+        mislabeled = left_valid_mask & ~left_finite_mask
+        if mislabeled.any():
+            loguru.logger.warning(
+                f"HaWoR left_valid marked {int(mislabeled.sum())} non-finite "
+                "frames as valid; forcing interpolation."
+            )
+        left_valid_mask &= left_finite_mask
 
     loguru.logger.info(f"Loaded hand data: {N} frames from {npz_path}")
 
@@ -478,6 +535,7 @@ def main(
             "reconstruction pipeline output directory (the video's directory)."
         )
     cfg = json.load(open(config_path))
+    capture_metadata = normalize_capture_metadata(cfg)
     object_name = cfg["object_names"][0]
     gpp_dir = f"{raw_dir}/obj_tracking_out/{object_name}"
     if not os.path.isdir(gpp_dir):
@@ -685,6 +743,23 @@ def main(
         left_betas = _interp_positions(left_betas, shared_mask)
         left_fingertips = left_joints[:, FINGERTIP_JOINT_IDX, :]
 
+    # Downstream wrist-frame construction calls SciPy Rotation/SVD and cannot
+    # produce a meaningful result from NaN inputs.  Keep the failure here
+    # explicit in case a future producer introduces a new invalid field that
+    # is not covered by the effective validity mask above.
+    if process_right:
+        _require_finite("right_joints", right_joints)
+        _require_finite("right_vertices", right_vertices)
+        _require_finite("right_rot", right_rot)
+        _require_finite("right_hand_pose", right_hand_pose)
+        _require_finite("right_betas", right_betas)
+    if process_left:
+        _require_finite("left_joints", left_joints)
+        _require_finite("left_vertices", left_vertices)
+        _require_finite("left_rot", left_rot)
+        _require_finite("left_hand_pose", left_hand_pose)
+        _require_finite("left_betas", left_betas)
+
     # ------------------------------------------------------------------
     # 5. Resolve object mesh and compute the world-frame shift
     # ------------------------------------------------------------------
@@ -734,6 +809,12 @@ def main(
     world_offset = np.array(
         [float(centering_offset[0]), float(centering_offset[1]), traj_min_z]
     )
+    # The reconstruction coordinates are camera-relative. After gravity
+    # alignment the original camera origin is still zero, then world_offset is
+    # subtracted from every trajectory point. Persist its resulting world pose
+    # so ego presentation does not have to infer it from the hand trajectory.
+    camera_origin_world = -world_offset
+    camera_forward_world = R_align.apply(np.array([0.0, 0.0, 1.0]))
     loguru.logger.info(
         f"world_offset={world_offset.round(4)} "
         f"(centering_xy={centering_offset[:2].round(4)}, "
@@ -915,6 +996,9 @@ def main(
         contact_left=np.zeros((N, 10)),
         contact_pos_left=np.zeros((10, 3)),
         centering_offset=centering_offset,
+        world_offset=world_offset,
+        camera_origin_world=camera_origin_world,
+        camera_forward_world=camera_forward_world,
         mano_verts_right=mano_verts_right,
         mano_faces_right=mano_faces_right,
         mano_verts_left=mano_verts_left,
@@ -925,6 +1009,8 @@ def main(
         mano_global_orient_left=mano_global_orient_left,
         mano_betas_right=mano_betas_right,
         mano_betas_left=mano_betas_left,
+        capture_viewpoint=np.asarray(capture_metadata["viewpoint"]),
+        capture_camera_motion=np.asarray(capture_metadata["camera_motion"]),
     )
     loguru.logger.info(f"Saved trajectory_keypoints.npz → {out_data_dir}")
 
@@ -937,6 +1023,7 @@ def main(
         "robot_type": "mano",
         "embodiment_type": embodiment_type,
         "data_id": data_id,
+        "capture": capture_metadata,
         # decompose_mesh.py prepends output_root_dir, so store a relative path.
         # For bimanual with a single shared object, only right_object_mesh_dir
         # is set (left_object_mesh_dir=None signals a shared object).
