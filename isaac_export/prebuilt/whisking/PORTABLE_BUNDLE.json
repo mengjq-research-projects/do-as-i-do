@@ -1,0 +1,39 @@
+{
+  "schema_version": "do-as-i-do.portable-isaac-replay.v1",
+  "isaac_sim_version": "5.1.0-rc.19+release.26219.9c81211b.gl",
+  "mode": "direct_isaac_replay",
+  "files": {
+    "README.md": {
+      "bytes": 484,
+      "sha256": "ef1b69e72b6f0b2d18deeca0bd1596b5741b294195ffdd2208e576725df52329"
+    },
+    "deployment_manifest.json": {
+      "bytes": 5535,
+      "sha256": "c25ba82b8fbd2cde89c25d6a4bd4d469f8781e4b3f240e5048c4d78f45a2122f"
+    },
+    "isaac_assets/visual_texture.png": {
+      "bytes": 1678174,
+      "sha256": "d18872bf8a72fb0953377a9e99b84c69cf139f1a91fa6e0d7e666ed6761d858a"
+    },
+    "isaac_scene_manifest.json": {
+      "bytes": 2652,
+      "sha256": "7fccd89e8d0d295e943c12e2754284549965f3c51a594dff2a4af5cbf2a0b6af"
+    },
+    "scene.usd": {
+      "bytes": 21919402,
+      "sha256": "fcc329b581d97a621dd8e6fb47b3a4cc13ae9e2ed81bcd3c2ac2fdfc2eae8b14"
+    },
+    "source_assets/trajectory_mjwp.npz": {
+      "bytes": 2785178,
+      "sha256": "dfa73ccf0a14787dc5ec773fdd8149058a8d58af1ea4b3b6b2e68d7adb32e8ac"
+    },
+    "source_assets/visual.obj": {
+      "bytes": 500469,
+      "sha256": "6e31b91a07174df77d5069c794581d6344d5ce126e4cacc2093680811f4db365"
+    },
+    "trajectory_dual_ur3e.npz": {
+      "bytes": 254984,
+      "sha256": "c0690d0468cd576d116b7cba7f2b2ec058da112aca44f74fb5846fbb3b72e0ba"
+    }
+  }
+}

@@ -26,6 +26,20 @@ The check confirms that the tracked UR3e, Sharpa, tool, and trajectory inputs
 exist, rejects developer-specific absolute paths, and runs the MuJoCo-package
 and Isaac-export unit tests without starting Isaac Sim.
 
+## Direct replay from the prebuilt portable package
+
+The branch also contains a prebuilt package that does not require MuJoCo or an
+MJCF-to-USD conversion step. With Isaac Sim 5.1 available, run:
+
+```bash
+./isaac_export/run_pipeline_local.sh replay \
+  --package-dir isaac_export/prebuilt/whisking --realtime
+```
+
+The package contains a composed binary USD, trajectory, manifests, tool mesh,
+and texture. It intentionally omits the 126 MiB of intermediate converted STL
+meshes and is therefore for direct replay, not USD rebuilding.
+
 ## 3. Generate the final MuJoCo package locally
 
 ```bash

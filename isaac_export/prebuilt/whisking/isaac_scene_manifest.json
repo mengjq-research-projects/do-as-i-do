@@ -1,0 +1,74 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-08-23T15:33:17.824729+00:00",
+  "scene_usd": "scene.usd",
+  "robot_articulation_prim": "/World/right_base/right_base",
+  "hand_articulation_prim": "/World/right_base/right_base",
+  "object_prim": "/World/right_object/right_object",
+  "package_kind": "robot_scene",
+  "arm_joint_names": [
+    "right_shoulder_pan_joint",
+    "right_shoulder_lift_joint",
+    "right_elbow_joint",
+    "right_wrist_1_joint",
+    "right_wrist_2_joint",
+    "right_wrist_3_joint"
+  ],
+  "root_joint_names": [],
+  "finger_joint_names": [
+    "right_hand_right_thumb_CMC_FE",
+    "right_hand_right_thumb_CMC_AA",
+    "right_hand_right_thumb_MCP_FE",
+    "right_hand_right_thumb_MCP_AA",
+    "right_hand_right_thumb_IP",
+    "right_hand_right_index_MCP_FE",
+    "right_hand_right_index_MCP_AA",
+    "right_hand_right_index_PIP",
+    "right_hand_right_index_DIP",
+    "right_hand_right_middle_MCP_FE",
+    "right_hand_right_middle_MCP_AA",
+    "right_hand_right_middle_PIP",
+    "right_hand_right_middle_DIP",
+    "right_hand_right_ring_MCP_FE",
+    "right_hand_right_ring_MCP_AA",
+    "right_hand_right_ring_PIP",
+    "right_hand_right_ring_DIP",
+    "right_hand_right_pinky_CMC",
+    "right_hand_right_pinky_MCP_FE",
+    "right_hand_right_pinky_MCP_AA",
+    "right_hand_right_pinky_PIP",
+    "right_hand_right_pinky_DIP"
+  ],
+  "joint_value_unit": "meter for root translations; radian otherwise",
+  "quaternion_order": "wxyz",
+  "articulation_prims_by_side": {
+    "left": "/World/left_base/left_base",
+    "right": "/World/right_base/right_base"
+  },
+  "validated_hand_mounts": {
+    "left": {
+      "joint_prim": "/World/joints/left_hand_left_hand_C_MC",
+      "ur3e_flange_body": "/World/left_base/left_wrist_3_link",
+      "sharpa_palm_body": "/World/left_base/left_hand_left_hand_C_MC"
+    },
+    "right": {
+      "joint_prim": "/World/joints/right_hand_right_hand_C_MC",
+      "ur3e_flange_body": "/World/right_base/right_wrist_3_link",
+      "sharpa_palm_body": "/World/right_base/right_hand_right_hand_C_MC"
+    }
+  },
+  "hidden_auxiliary_visual_prim_count": 4,
+  "replay_collision_proxy_count": 6,
+  "repaired_root_fixed_joint_count": 2,
+  "task_object_appearance": {
+    "status": "repaired",
+    "source_mesh_prim": "/meshes/task_object_visual_mesh/task_object_visual_mesh",
+    "xform_prim": "/World/ReplayTaskObjectVisual",
+    "mesh_prim": "/World/ReplayTaskObjectVisual/Geometry",
+    "hidden_imported_visual_root": "/World/right_object/right_object/visuals",
+    "face_varying_uv_count": 17658,
+    "texture": "isaac_assets/visual_texture.png",
+    "visibility": "inherited",
+    "double_sided": true
+  }
+}

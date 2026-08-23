@@ -1,0 +1,218 @@
+{
+  "schema_version": "deployment.robot_scene.v1",
+  "generated_at": "2026-08-23T09:04:59.441657+00:00",
+  "robot": {
+    "type": "dual_ur3e_sharpa",
+    "embodiment": "right",
+    "arm_joints": [
+      {
+        "name": "right_shoulder_pan_joint",
+        "lower_rad": -6.28319,
+        "upper_rad": 6.28319
+      },
+      {
+        "name": "right_shoulder_lift_joint",
+        "lower_rad": -6.28319,
+        "upper_rad": 6.28319
+      },
+      {
+        "name": "right_elbow_joint",
+        "lower_rad": -3.14159,
+        "upper_rad": 3.14159
+      },
+      {
+        "name": "right_wrist_1_joint",
+        "lower_rad": -6.28319,
+        "upper_rad": 6.28319
+      },
+      {
+        "name": "right_wrist_2_joint",
+        "lower_rad": -6.28319,
+        "upper_rad": 6.28319
+      },
+      {
+        "name": "right_wrist_3_joint",
+        "lower_rad": -6.28319,
+        "upper_rad": 6.28319
+      }
+    ],
+    "finger_joints": [
+      {
+        "name": "right_hand_right_thumb_CMC_FE",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_thumb_CMC_AA",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_thumb_MCP_FE",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_thumb_MCP_AA",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_thumb_IP",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_index_MCP_FE",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_index_MCP_AA",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_index_PIP",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_index_DIP",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_middle_MCP_FE",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_middle_MCP_AA",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_middle_PIP",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_middle_DIP",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_ring_MCP_FE",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_ring_MCP_AA",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_ring_PIP",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_ring_DIP",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_pinky_CMC",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_pinky_MCP_FE",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_pinky_MCP_AA",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_pinky_PIP",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      },
+      {
+        "name": "right_hand_right_pinky_DIP",
+        "lower_rad": -6.283185307179586,
+        "upper_rad": 6.283185307179586
+      }
+    ]
+  },
+  "object": {
+    "body_name": "right_object",
+    "free_joint": "right_object_joint",
+    "source_mesh": "source_assets/visual.obj",
+    "source_texture": "isaac_assets/visual_texture.png",
+    "playback_mode": "kinematic_reference"
+  },
+  "scene": {
+    "usd": "scene.usd",
+    "mjcf": null,
+    "rebuild_assets_included": false
+  },
+  "source": {
+    "trajectory": "source_assets/trajectory_mjwp.npz"
+  },
+  "timing": {
+    "sim_dt_seconds": 0.005,
+    "frame_count": 1600,
+    "start_frame": 600
+  },
+  "coordinate_system": {
+    "world": "MuJoCo/Isaac right-handed Z-up",
+    "length_unit": "meter",
+    "angle_unit": "radian",
+    "quaternion_order": "wxyz",
+    "workspace_rotation": "RotZ(yaw) * RotY(pitch) * RotX(roll)"
+  },
+  "trajectory": {
+    "file": "trajectory_dual_ur3e.npz"
+  },
+  "trajectory_arrays": {
+    "arm_qpos": [
+      1600,
+      6
+    ],
+    "finger_qpos": [
+      1600,
+      22
+    ],
+    "object_position": [
+      1600,
+      3
+    ],
+    "object_quaternion": [
+      1600,
+      4
+    ],
+    "timestamps": [
+      1600
+    ],
+    "valid_mask": [
+      1600
+    ],
+    "source_frame_indices": [
+      1600
+    ]
+  },
+  "isaac_sim": {
+    "version": "5.1.0-rc.19+release.26219.9c81211b.gl",
+    "asset_conversion_status": "pass",
+    "state_readback_validation_status": "pass"
+  },
+  "portable_bundle": {
+    "mode": "direct_isaac_replay",
+    "requires_mjcf_rebuild": false
+  }
+}
