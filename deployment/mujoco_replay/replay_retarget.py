@@ -37,7 +37,7 @@ import mink
 import mujoco
 import numpy as np
 import viser
-from build_scene import build
+from build_scene import HAND_MOUNT_YAW_DEG, HAND_OFFSET, build
 from final_package import (
     TRAJECTORY_FILENAME,
     discover_object_mesh,
@@ -47,19 +47,11 @@ from final_package import (
     transform_object_trajectory,
 )
 
-# Mirrors the HAND_OFFSET constant inside build_scene.build():
-# coupler_black_height (0.01325) + coupler_silver_height (0.0175) m
-# along the attachment_site +Z axis.
-HAND_OFFSET = 0.03075
 from mjviser import ViserMujocoScene
 
 # Placeholder default — pass --traj explicitly to point at a spider
 # trajectory_mjwp.npz produced by the retargeting stage.
 DEFAULT_TRAJ = Path("trajectory_mjwp.npz")
-
-# Sharpa-root yaw in the flange frame, matching build_scene.z_quat(...) for
-# each hand: right_hand_C_MC = z_quat(135), left_hand_C_MC = z_quat(45).
-HAND_MOUNT_YAW_DEG = {"right": 135.0, "left": 45.0}
 
 # Saved preset: world position where the wrist (sharpa root) sits at the
 # start_frame. In dual_ur3e world coords: +x toward far wall, +y toward

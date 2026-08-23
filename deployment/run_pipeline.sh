@@ -3,7 +3,8 @@
 set -Eeuo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PACKAGE_ROOT="${DO_AS_I_DO_PACKAGE_ROOT:-/data/jiaqimeng/retargeting_dev}"
+REPOSITORY_ROOT="$(cd "$HERE/.." && pwd)"
+PACKAGE_ROOT="${DO_AS_I_DO_PACKAGE_ROOT:-$REPOSITORY_ROOT}"
 RELEASE="${DO_AS_I_DO_RELEASE:-current}"
 if [[ "$RELEASE" = /* ]]; then
     RELEASE_DIR="$RELEASE"

@@ -17,3 +17,6 @@
 *.py[cod]
 **/.pytest_cache/
 **/.ruff_cache/
+
+# Temporary meshes produced while Isaac sanitizes imported STL assets
+deployment/mujoco_replay/assets/**/*_tmp/

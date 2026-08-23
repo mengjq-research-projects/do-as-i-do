@@ -1,5 +1,8 @@
 # Isaac Level A Export
 
+For the tested UR3e + Sharpa + whisk end-to-end reproduction path, start with
+[`REPRODUCE_ISAAC.md`](../REPRODUCE_ISAAC.md).
+
 This module is an independent downstream stage. It does not modify or rerun
 Reconstruction or Retargeting.
 
@@ -85,6 +88,29 @@ the repository root:
 This command restores and verifies the managed Isaac environment internally;
 new developers do not need to run `dependency_management/manage.sh`.
 
+For a local extracted Isaac Sim installation, use the local wrapper. It checks
+`$ISAAC_SIM_ROOT`, then common locations including
+`$HOME/code/rl_sim/isaacsim`, and invokes that installation's `python.sh`:
+
+```bash
+./isaac_export/run_pipeline_local.sh export \
+  --output-dir isaac_export/outputs/whisking
+
+./isaac_export/run_pipeline_local.sh build-usd \
+  --package-dir isaac_export/outputs/whisking \
+  --run-dir retargeting/outputs/sharpa/right/whisking/0 \
+  --headless
+
+./isaac_export/run_pipeline_local.sh replay \
+  --package-dir isaac_export/outputs/whisking \
+  --headless --max-frames 30
+```
+
+Set `ISAAC_SIM_ROOT=/path/to/isaacsim` when the installation is elsewhere.
+On Isaac Sim 5, `build-usd` creates an `isaac5_compat/scene.xml` plus sanitized
+copies of binary STL files whose headers look like ASCII STL. The original
+Retargeting assets are never modified.
+
 Release maintainers use `setup_remote_isaac.sh` only when refreshing the pinned
 Isaac wheelhouse. NVIDIA publishes the Isaac Sim wheels only on its own package
 index, so that refresh happens on the networked relay workstation. Normal
@@ -103,8 +129,9 @@ cd "$(git rev-parse --show-toplevel)"
   --headless
 ```
 
-This imports the complete Retargeting MJCF, keeps the Sharpa visual and
-collision meshes, adds a ground collider and light, and writes:
+This imports the complete Retargeting MJCF, keeps collision physics while
+hiding collision render proxies and MJCF site markers, adds a light, and
+writes:
 
 ```text
 isaac_export/outputs/whisking/scene.usd
@@ -116,15 +143,19 @@ isaac_export/outputs/whisking/isaac_scene_manifest.json
 Open an interactive Isaac window (X11/VNC display required):
 
 ```bash
-./isaac_export/run_pipeline.sh replay \
+./isaac_export/run_pipeline_local.sh replay \
   --package-dir isaac_export/outputs/whisking \
   --realtime
 ```
 
+GUI replay loops by default so the window does not disappear after the first
+five-second trajectory pass. Close the window or press `Ctrl+C` to stop. Add
+`--once` when a single interactive pass is desired.
+
 Or run headless and render an MP4:
 
 ```bash
-./isaac_export/run_pipeline.sh replay \
+./isaac_export/run_pipeline_local.sh replay \
   --package-dir isaac_export/outputs/whisking \
   --headless \
   --record-dir isaac_export/outputs/whisking/render
@@ -132,7 +163,9 @@ Or run headless and render an MP4:
 
 The replayer drives the six scalar wrist joints, 22 Sharpa finger joints, and
 the object world pose by name. Values outside the MJCF finger limits are clipped
-before they reach PhysX. `Ctrl+C` stops either replay mode safely.
+before they reach PhysX. Recording fits the standard viewport camera to the valid
+hand/object workspace, and repeated recordings replace only recorder-owned
+frames in the chosen directory. `Ctrl+C` stops either replay mode safely.
 
 ## Full UR3e + Sharpa + object scene
 

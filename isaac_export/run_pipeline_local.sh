@@ -4,6 +4,21 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+if [[ -z "${ISAAC_PYTHON:-}" ]]; then
+    ISAAC_ROOT_CANDIDATES=(
+        "${ISAAC_SIM_ROOT:-}"
+        "${HOME}/code/rl_sim/isaacsim"
+        "${HOME}/isaacsim"
+        "/opt/isaacsim"
+    )
+    for candidate in "${ISAAC_ROOT_CANDIDATES[@]}"; do
+        if [[ -n "$candidate" && -x "$candidate/python.sh" ]]; then
+            export ISAAC_PYTHON="$candidate/python.sh"
+            break
+        fi
+    done
+fi
+
 if [[ -n "${DO_AS_I_DO_ISAAC_EXPORT_OUTPUT_DIR:-}" ]]; then
     export DO_AS_I_DO_ISAAC_EXPORT_OUTPUT_DIR
 else

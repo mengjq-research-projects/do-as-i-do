@@ -3,7 +3,8 @@
 set -Eeuo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PACKAGE_ROOT="${DO_AS_I_DO_PACKAGE_ROOT:-/data/jiaqimeng/retargeting_dev}"
+REPOSITORY_ROOT="$(cd "$HERE/.." && pwd)"
+PACKAGE_ROOT="${DO_AS_I_DO_PACKAGE_ROOT:-$REPOSITORY_ROOT}"
 RELEASE="${DO_AS_I_DO_RELEASE:-current}"
 if [[ "$RELEASE" = /* ]]; then
     RELEASE_DIR="$RELEASE"
@@ -88,7 +89,8 @@ esac
 
 if [[ "$ACTION" != "export" ]]; then
     if ! "$PYTHON_BIN" -c \
-        'import importlib.metadata as m; m.version("isaacsim")' >/dev/null 2>&1; then
+        'import importlib.util; assert importlib.util.find_spec("isaacsim")' \
+        >/dev/null 2>&1; then
         echo "$ACTION requires the managed/full Isaac Sim environment." >&2
         echo "Run: ./setup_all.sh --managed-offline" >&2
         exit 1

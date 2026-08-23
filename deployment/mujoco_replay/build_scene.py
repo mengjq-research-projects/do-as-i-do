@@ -78,6 +78,21 @@ RIGHT_POS = (ARM_X, BREADBOARD_Y - SEPARATION / 2, BLOCK_TOP_Z)
 LEFT_EULER_DEG = (0.0, 0.0, -68.27)
 RIGHT_EULER_DEG = (0.0, 0.0, -111.73)
 
+# Calibrated UR3e flange-to-Sharpa transform.  These constants are public on
+# purpose: the IK retargeter imports the exact same transform when converting
+# a desired Sharpa wrist pose into an UR3e attachment-site target.  Keeping a
+# single source of truth prevents the built mechanism and the solved
+# trajectory from silently using different hand mounts.
+HAND_ATTACHMENT_SITE_POS_Y = 0.09215
+COUPLER_BLACK_RADIUS = 0.034
+COUPLER_BLACK_HEIGHT = 0.01325
+COUPLER_SILVER_RADIUS = 0.021
+COUPLER_SILVER_HEIGHT = 0.0175
+HAND_OFFSET = COUPLER_BLACK_HEIGHT + COUPLER_SILVER_HEIGHT
+HAND_ATTACHMENT_SITE_QUAT = (-1.0, 1.0, 0.0, 0.0)
+HAND_MOUNT_YAW_DEG = {"left": 45.0, "right": 135.0}
+HAND_RGBA = (0.79216, 0.81961, 0.93333, 1.0)
+
 # Target joint angles (rad) — order matches the UR3e joint chain:
 # shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3.
 LEFT_QPOS = [
@@ -265,30 +280,33 @@ def build(
     # Flange-to-hand coupler: a black base cylinder against the arm,
     # followed by a silver cylinder against the hand. Both oriented along
     # the wrist_3_joint axis (which is +Y in wrist_3_link's frame).
-    SITE_POS_Y = 0.09215
-    BLACK_R, BLACK_H = 0.034, 0.01325
-    SILVER_R, SILVER_H = 0.021, 0.0175
-    HAND_OFFSET = BLACK_H + SILVER_H  # 0.03075 m along site +Z
-    HAND_RGBA = [0.79216, 0.81961, 0.93333, 1]
-    SITE_QUAT = [-1, 1, 0, 0]  # same as the UR3e attachment_site
-
     for prefix in ("left", "right"):
         wrist = parent.body(f"{prefix}_wrist_3_link")
         wrist.add_geom(
             name=f"{prefix}_coupler_black",
             type=mujoco.mjtGeom.mjGEOM_CYLINDER,
-            size=[BLACK_R, BLACK_H / 2, 0],
-            pos=[0, SITE_POS_Y + BLACK_H / 2, 0],
-            quat=SITE_QUAT,
+            size=[COUPLER_BLACK_RADIUS, COUPLER_BLACK_HEIGHT / 2, 0],
+            pos=[
+                0,
+                HAND_ATTACHMENT_SITE_POS_Y + COUPLER_BLACK_HEIGHT / 2,
+                0,
+            ],
+            quat=list(HAND_ATTACHMENT_SITE_QUAT),
             rgba=[0.05, 0.05, 0.05, 1],
         )
         wrist.add_geom(
             name=f"{prefix}_coupler_silver",
             type=mujoco.mjtGeom.mjGEOM_CYLINDER,
-            size=[SILVER_R, SILVER_H / 2, 0],
-            pos=[0, SITE_POS_Y + BLACK_H + SILVER_H / 2, 0],
-            quat=SITE_QUAT,
-            rgba=HAND_RGBA,
+            size=[COUPLER_SILVER_RADIUS, COUPLER_SILVER_HEIGHT / 2, 0],
+            pos=[
+                0,
+                HAND_ATTACHMENT_SITE_POS_Y
+                + COUPLER_BLACK_HEIGHT
+                + COUPLER_SILVER_HEIGHT / 2,
+                0,
+            ],
+            quat=list(HAND_ATTACHMENT_SITE_QUAT),
+            rgba=list(HAND_RGBA),
         )
 
     # Attach Sharpa Wave hands to each arm's flange (attachment_site).
@@ -298,14 +316,30 @@ def build(
     left_hand = mujoco.MjSpec.from_file(str(LEFT_HAND_XML))
     right_hand = mujoco.MjSpec.from_file(str(RIGHT_HAND_XML))
 
+    # ``MjSpec.attach`` merges the child assets into ``parent`` but keeps the
+    # child mesh filenames unchanged.  The parent compiler meshdir points at
+    # the UR3e OBJ directory, so leaving the hand filenames relative would
+    # make the serialized scene fail to load outside the in-memory build
+    # (e.g. ``left_hand_C_MC_visual_.STL`` would be searched for beside the
+    # UR3e meshes).  Store absolute hand-mesh paths before attaching so the
+    # final scene.xml is self-contained and reloadable.
+    def absolutize_hand_meshes(hand: mujoco.MjSpec, hand_xml: Path) -> None:
+        mesh_dir = hand_xml.parent / "meshes"
+        for mesh in hand.meshes:
+            if mesh.file:
+                mesh.file = str((mesh_dir / mesh.file).resolve())
+
+    absolutize_hand_meshes(left_hand, LEFT_HAND_XML)
+    absolutize_hand_meshes(right_hand, RIGHT_HAND_XML)
+
     def z_quat(deg):
         t = math.radians(deg)
         return [math.cos(t / 2), 0, 0, math.sin(t / 2)]
 
     left_hand.body("left_hand_C_MC").pos = [0, 0, HAND_OFFSET]
-    left_hand.body("left_hand_C_MC").quat = z_quat(45)
+    left_hand.body("left_hand_C_MC").quat = z_quat(HAND_MOUNT_YAW_DEG["left"])
     right_hand.body("right_hand_C_MC").pos = [0, 0, HAND_OFFSET]
-    right_hand.body("right_hand_C_MC").quat = z_quat(135)
+    right_hand.body("right_hand_C_MC").quat = z_quat(HAND_MOUNT_YAW_DEG["right"])
 
     parent.attach(
         left_hand, prefix="left_hand_", site=parent.site("left_attachment_site")
