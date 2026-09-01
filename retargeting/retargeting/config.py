@@ -180,7 +180,11 @@ class Config:
     # In-hand threshold (meters) used by the post-IK pedestal-placement step
     # to decide whether an endpoint is in-hand (no pedestal) or at rest
     # (place a pedestal under the object). Min vertex distance from the hand
-    # surface to the object mesh. See ``retargeting/pipeline/resolve_pedestal.py``.
+    # surface to the object mesh. This also gates the per-frame physics
+    # in-hand/rest state; task-specific pipelines should use a contact-scale
+    # threshold rather than the permissive legacy default when release timing
+    # matters. See ``retargeting/pipeline/resolve_pedestal.py`` and
+    # ``retargeting/utils/mjwp.py``.
     hand_object_distance_thresh: float = 0.1
     # Floor analog of ``pedestal_penalty_scale`` for datasets where the object
     # rests directly on the floor (object_floor_collision=True) rather than on a

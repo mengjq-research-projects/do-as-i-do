@@ -372,6 +372,7 @@ def setup_env(config: Config, ref_data: tuple[torch.Tensor, ...]) -> MJWPEnv:
                     points_world=kp["mano_verts"],
                     qpos_obj=kp["qpos_obj"],
                     obj_verts=obj_verts,
+                    distance_thresh=config.hand_object_distance_thresh,
                 )
                 # Reference object-to-pedestal proximity: object's lowest vertex
                 # above the pedestal top face, the pedestal analog of the floor

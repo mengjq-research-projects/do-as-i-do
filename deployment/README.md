@@ -5,6 +5,7 @@ The simulation entry separates the input viewpoint from the output embodiment:
 
 - `viewpoint=ego|exo|auto` describes the source video.
 - `render-mode=hand-only|full-arm|auto` selects what the viewer shows.
+- `camera-mode=auto|scene|ego|top-down` selects how that output is presented.
 - `auto` maps ego input to a first-person free-root Sharpa hand + object and exo
   input to the complete UR3e + Sharpa + object scene. Legacy/unknown input keeps
   the historical full-arm behavior.
@@ -61,6 +62,11 @@ explicit CLI value takes priority:
 ./deployment/run_pipeline.sh mujoco-replay \
   --viewpoint exo --render-mode full-arm --side right \
   --traj /path/to/trajectory_mjwp.npz
+
+# Canonical overhead validation, independent of unknown source-camera parameters.
+./deployment/run_pipeline.sh mujoco-replay \
+  --render-mode full-arm --camera-mode top-down --side right \
+  --traj /path/to/trajectory_mjwp.npz
 ```
 
 Both modes open a viser web GUI at the printed URL. Hand-only mode reuses
@@ -69,6 +75,12 @@ ego camera uses the persisted reconstruction camera origin for new runs and a
 compatible approximation for old runs. A moving-camera input is currently
 shown through one stabilized camera because Reconstruction does not yet produce
 per-frame camera extrinsics.
+
+`--camera-mode top-down` fixes the optical axis to world `-Z` and keeps world
+`+Y` at the top of the image. The viewer derives its center and height from the
+full tabletop plus the current wrist/object path, so the preset is repeatable
+without hard-coding a task-specific camera pose or requiring source-camera
+calibration. Recomputing the workspace also refreshes this framing.
 
 In full-arm mode, tune the workspace placement
 (x/y/z + yaw/pitch/roll), the start frame, and collision avoidance; hit
@@ -133,8 +145,9 @@ an existing package without opening MuJoCo or Isaac:
   retargeting/outputs/sharpa/right/whisking/0
 ```
 
-See [`PROJECT_STRUCTURE_AND_WORKFLOW.md`](../PROJECT_STRUCTURE_AND_WORKFLOW.md)
-for the full Reconstruction → Retargeting → MuJoCo → Isaac command sequence.
+See the root [`README.md`](../README.md#分阶段入口) for the general staged entry
+points, and [`EGO_DEMO_WALKTHROUGH.md`](../EGO_DEMO_WALKTHROUGH.md) for the
+fully audited Ego Mug command history.
 
 ## 2. robot_replay (trajectory → hardware)
 

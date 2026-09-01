@@ -20,6 +20,7 @@ from retargeting.pipeline.optimize_physics import main as optimize_physics
 from retargeting.pipeline.process_dataset import main as process_dataset
 from retargeting.pipeline.resolve_pedestal import resolve_scene_pedestal
 from retargeting.pipeline.solve_ik import main as solve_ik
+from retargeting.utils.io import get_processed_data_dir, resolve_auto_embodiment
 
 CONFIG_DIR = Path(__file__).parent / "config"
 
@@ -49,6 +50,14 @@ class PipelineConfig:
     show_viewer: bool = True
     output_root_dir: str = "outputs"
     add_ur3_arm: bool = True
+    object_upright: bool = False
+    object_up_axis: str = "+z"
+    object_up_vector: tuple[float, float, float] | None = None
+    terminal_hand_retreat: bool = False
+    hand_grasp_anchor_vector: tuple[float, float, float] | None = None
+    hand_object_distance_thresh: float | None = None
+    force_pedestal_start: bool = False
+    force_pedestal_end: bool = False
 
 
 def load_mjwp_config(**overrides) -> Config:
@@ -71,6 +80,34 @@ def load_mjwp_config(**overrides) -> Config:
     return Config(**filtered)
 
 
+def resolve_trial_output_dir(config: Config) -> Path:
+    """Resolve the trial directory before MJWP mutates ``config.output_dir``.
+
+    ``Config.output_dir`` is populated inside ``process_config`` when physics
+    optimization starts.  Capture metadata must be written before that stage
+    as the optimizer may keep an interactive viewer alive after completion.
+    Resolve the same path here instead of accidentally treating the initial
+    empty value as the current directory.
+    """
+    embodiment_type = config.embodiment_type
+    if embodiment_type == "auto":
+        embodiment_type = resolve_auto_embodiment(
+            config.dataset_name,
+            config.output_root_dir,
+            config.task,
+        )
+    return Path(
+        get_processed_data_dir(
+            output_root_dir=str(Path(config.output_root_dir).resolve()),
+            dataset_name=config.dataset_name,
+            robot_type=config.robot_type,
+            embodiment_type=embodiment_type,
+            task=config.task,
+            data_id=config.data_id,
+        )
+    )
+
+
 def run_pipeline(cfg: PipelineConfig) -> None:
     if not cfg.raw_dir:
         raise ValueError(
@@ -89,6 +126,15 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         embodiment_type=cfg.hand_type,
         dataset_name=cfg.dataset_name,
         force=cfg.force,
+        # An explicit semantic up vector is itself an unambiguous request for
+        # upright projection. Requiring the separate boolean as well is easy
+        # to miss and silently leaves the raw reconstruction orientation in
+        # place.
+        object_upright=(cfg.object_upright or cfg.object_up_vector is not None),
+        object_up_axis=cfg.object_up_axis,
+        object_up_vector=cfg.object_up_vector,
+        terminal_hand_retreat=cfg.terminal_hand_retreat,
+        hand_grasp_anchor_vector=cfg.hand_grasp_anchor_vector,
     )
     if pipeline_task is None:
         loguru.logger.error(f"{cfg.dataset_name} processing failed (no task_name returned)")
@@ -138,7 +184,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     # it is the single source of truth for physics/threshold params, and the
     # pedestal step (Stage 4.5) needs hand_object_distance_thresh from it —
     # otherwise it falls back to in_hand.DEFAULT_DISTANCE_THRESH.
-    config = load_mjwp_config(
+    mjwp_overrides = dict(
         dataset_name=cfg.dataset_name,
         task=pipeline_task,
         data_id=cfg.data_id,
@@ -150,8 +196,16 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         force=cfg.force,
         show_viewer=cfg.show_viewer,
     )
+    if cfg.hand_object_distance_thresh is not None:
+        mjwp_overrides["hand_object_distance_thresh"] = (
+            cfg.hand_object_distance_thresh
+        )
+    config = load_mjwp_config(**mjwp_overrides)
 
-    capture_path = write_capture_metadata(cfg.raw_dir, config.output_dir)
+    capture_path = write_capture_metadata(
+        cfg.raw_dir,
+        resolve_trial_output_dir(config),
+    )
     loguru.logger.info(f"Saved capture metadata → {capture_path}")
 
     # Stage 4.5: resolve scene_ik.xml -> scene.xml (+ scene_eq.xml).
@@ -165,6 +219,8 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         use_pedestal=USE_PEDESTAL,
         use_support=USE_SUPPORT,
         hand_object_distance_thresh=config.hand_object_distance_thresh,
+        force_pedestal_start=cfg.force_pedestal_start,
+        force_pedestal_end=cfg.force_pedestal_end,
         force=cfg.force,
     )
 

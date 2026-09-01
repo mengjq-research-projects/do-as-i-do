@@ -49,9 +49,37 @@ def _parse_dispatch_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]
     parser.add_argument("--render-mode", choices=("auto", "hand-only", "full-arm"), default="auto")
     parser.add_argument("--viewpoint", choices=("auto", "ego", "exo"), default=None)
     parser.add_argument("--camera-motion", choices=("auto", "moving", "static"), default=None)
+    parser.add_argument(
+        "--camera-mode",
+        choices=("auto", "ego", "scene", "top-down"),
+        default="auto",
+    )
     parser.add_argument("--traj", type=Path, default=DEFAULT_TRAJ)
     parser.add_argument("--speed", type=float, default=1.0)
     parser.add_argument("--port", type=int, default=None)
+    parser.add_argument("--ego-fov", type=float, default=None)
+    parser.add_argument("--ego-distance", type=float, default=None)
+    parser.add_argument(
+        "--display-object-upright",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+    )
+    parser.add_argument(
+        "--display-object-up-axis",
+        choices=("+x", "-x", "+y", "-y", "+z", "-z"),
+        default=None,
+    )
+    parser.add_argument(
+        "--display-object-up-vector",
+        type=float,
+        nargs=3,
+        default=None,
+    )
+    parser.add_argument(
+        "--display-hand-level",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+    )
     return parser.parse_known_args(argv)
 
 
@@ -92,7 +120,11 @@ def main() -> None:
         "--viewpoint",
         viewpoint,
         "--camera-mode",
-        "ego" if viewpoint == "ego" else "scene",
+        (
+            args.camera_mode
+            if args.camera_mode != "auto"
+            else ("ego" if viewpoint == "ego" else "scene")
+        ),
         "--fps",
         str(fps),
     ]
@@ -100,6 +132,27 @@ def main() -> None:
         command.extend(("--port", str(args.port)))
     if args.camera_motion is not None:
         command.extend(("--camera-motion", args.camera_motion))
+    if args.ego_fov is not None:
+        command.extend(("--ego-fov", str(args.ego_fov)))
+    if args.ego_distance is not None:
+        command.extend(("--ego-distance", str(args.ego_distance)))
+    if args.display_object_upright is not None:
+        command.append(
+            "--display-object-upright"
+            if args.display_object_upright
+            else "--no-display-object-upright"
+        )
+    if args.display_object_up_axis is not None:
+        command.append(f"--display-object-up-axis={args.display_object_up_axis}")
+    if args.display_object_up_vector is not None:
+        command.append("--display-object-up-vector")
+        command.extend(str(value) for value in args.display_object_up_vector)
+    if args.display_hand_level is not None:
+        command.append(
+            "--display-hand-level"
+            if args.display_hand_level
+            else "--no-display-hand-level"
+        )
     os.execv(sys.executable, command)
 
 

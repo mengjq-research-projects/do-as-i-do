@@ -713,9 +713,19 @@ def main(config: Config):
             )
             terminate = terminate | terminate_nan
             if terminate[0]:
+                reasons = []
+                if bool(term_info["terminate_z"][0].item()):
+                    reasons.append("object_z_below_threshold")
+                if bool(term_info["terminate_pen"][0].item()):
+                    reasons.append("penetration")
+                if bool(terminate_pen_substep[0].item()):
+                    reasons.append("substep_penetration")
+                if bool(terminate_nan[0].item()):
+                    reasons.append("non_finite_state")
                 loguru.logger.info(
-                    "Early termination at step {}/{}: terminate condition triggered",
+                    "Early termination at step {}/{}: {}",
                     sim_step, config.max_sim_steps,
+                    ", ".join(reasons) or "unknown_condition",
                 )
                 break
 
@@ -768,4 +778,3 @@ def main(config: Config):
             pass
 
     return errors
-

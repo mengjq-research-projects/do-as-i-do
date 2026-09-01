@@ -115,6 +115,7 @@ def _object_bottom_footprint(
     com_local: np.ndarray | None = None,
     slice_thickness: float = 0.01,
     margin: float = 0.0,
+    center_on_com: bool = False,
 ) -> tuple[np.ndarray, float, float]:
     """Footprint (center_xy, radius, bottom_z) of the object's resting region.
 
@@ -140,7 +141,15 @@ def _object_bottom_footprint(
     else:
         com_xy = (all_xy.min(axis=0) + all_xy.max(axis=0)) / 2.0
     com_offset = float(np.linalg.norm(com_xy - bottom_center))
-    if com_offset > bottom_radius:
+    if center_on_com:
+        # Upright asymmetric objects (notably a mug with a handle) can have
+        # their COM close to the edge of the visual bottom patch. Center both
+        # the invisible support and its pedestal directly below the COM, and
+        # expand them to cover that complete bottom patch. Otherwise a tiny
+        # gravity torque can tip the object as soon as the warmup weld releases.
+        center_xy = com_xy
+        radius = float(np.linalg.norm(bottom_xy - com_xy, axis=1).max())
+    elif com_offset > bottom_radius:
         center_xy = com_xy
         radius = float(np.linalg.norm(all_xy - com_xy, axis=1).max())
     else:
@@ -451,6 +460,8 @@ def resolve_scene_pedestal(
     object_frictionloss: float = 1e-4,
     friction_scale: float = 1.5,
     hand_object_distance_thresh: float = DEFAULT_DISTANCE_THRESH,
+    force_pedestal_start: bool = False,
+    force_pedestal_end: bool = False,
     act_scene: bool = False,
     force: bool = False,
 ) -> None:
@@ -537,8 +548,16 @@ def resolve_scene_pedestal(
                 use_visual_mesh_as_collision,
             )
             ref_qpos_obj = keypoints[f"qpos_obj_{side}"]
+            object_upright = bool(
+                np.asarray(keypoints.get("object_upright", False)).item()
+            )
             placed_for_side: list[tuple[np.ndarray, float, float]] = []
             for ep_name, frame_idx in (("start", 0), ("end", -1)):
+                force_endpoint = (
+                    force_pedestal_start
+                    if ep_name == "start"
+                    else force_pedestal_end
+                )
                 in_hand, min_dist, hand_idx, *_ = in_hand_at_endpoint(
                     hand_verts_world=hand_verts,
                     qpos_obj=ref_qpos_obj,
@@ -552,14 +571,25 @@ def resolve_scene_pedestal(
                     f"{side} object ({ep_name}): in_hand={in_hand} "
                     f"(min hand-vert→object dist={min_dist:.4f}m {cmp_op} "
                     f"{hand_object_distance_thresh:.4f}m [{pass_fail}]) → "
-                    + ("stabilize (add pedestal)" if not in_hand else "skip (no pedestal)")
+                    + (
+                        "stabilize (forced pedestal)"
+                        if force_endpoint
+                        else (
+                            "stabilize (add pedestal)"
+                            if not in_hand
+                            else "skip (no pedestal)"
+                        )
+                    )
                 )
-                if in_hand:
+                if in_hand and not force_endpoint:
                     continue
                 # Place using actual IK-output pose at this endpoint.
                 qpos_frame = ik_endpoints[side][frame_idx]
                 center_xy, radius, top_z = _object_bottom_footprint(
-                    obj_verts, qpos_frame, com_local=obj_com,
+                    obj_verts,
+                    qpos_frame,
+                    com_local=obj_com,
+                    center_on_com=object_upright,
                 )
                 # De-duplicate near-overlapping pedestals on the same side.
                 if any(
@@ -649,6 +679,8 @@ def main(
     object_frictionloss: float = 1e-4,
     friction_scale: float = 1.5,
     hand_object_distance_thresh: float = DEFAULT_DISTANCE_THRESH,
+    force_pedestal_start: bool = False,
+    force_pedestal_end: bool = False,
     act_scene: bool = False,
     force: bool = False,
 ):
@@ -666,6 +698,8 @@ def main(
         object_frictionloss=object_frictionloss,
         friction_scale=friction_scale,
         hand_object_distance_thresh=hand_object_distance_thresh,
+        force_pedestal_start=force_pedestal_start,
+        force_pedestal_end=force_pedestal_end,
         act_scene=act_scene,
         force=force,
     )

@@ -11,6 +11,7 @@
 /retargeting/outputs/
 /isaac_export/outputs/
 /isaac_export/.venv-isaac/
+/artifacts/
 
 # Common local Python/cache noise
 **/__pycache__/

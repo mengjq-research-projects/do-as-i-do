@@ -60,6 +60,37 @@ class ResolveRenderModeTest(unittest.TestCase):
                 "auto",
             )
 
+    def test_ego_camera_overrides_are_consumed_by_dispatcher(self) -> None:
+        args, remaining = replay_dispatch._parse_dispatch_args(
+            [
+                "--camera-mode",
+                "top-down",
+                "--ego-fov",
+                "50",
+                "--ego-distance",
+                "0.8",
+            ]
+        )
+        self.assertEqual(args.camera_mode, "top-down")
+        self.assertEqual(args.ego_fov, 50.0)
+        self.assertEqual(args.ego_distance, 0.8)
+        self.assertEqual(remaining, [])
+
+    def test_exact_object_up_vector_is_consumed_by_dispatcher(self) -> None:
+        args, remaining = replay_dispatch._parse_dispatch_args(
+            [
+                "--display-object-up-vector",
+                "0.0316",
+                "0.3138",
+                "-0.9490",
+            ]
+        )
+        self.assertEqual(
+            args.display_object_up_vector,
+            [0.0316, 0.3138, -0.9490],
+        )
+        self.assertEqual(remaining, [])
+
 
 if __name__ == "__main__":
     unittest.main()

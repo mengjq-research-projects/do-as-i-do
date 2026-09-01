@@ -38,7 +38,7 @@ import mink
 import mujoco
 import numpy as np
 import viser
-from build_scene import build
+from build_scene import TABLE_HALF, TABLE_TOP_Z, build
 from final_package import (
     TRAJECTORY_FILENAME,
     discover_object_mesh,
@@ -714,6 +714,79 @@ def _workspace_transform(
     return new_pos, new_quat
 
 
+def _workspace_wrist_positions(
+    qpos: np.ndarray,
+    *,
+    wrist_anchor: np.ndarray,
+    workspace_xyz: np.ndarray,
+    yaw_deg: float,
+    pitch_deg: float,
+    roll_deg: float,
+) -> np.ndarray:
+    """Transform source wrist positions into the robot workspace."""
+    q_rot = _workspace_rot_quat(yaw_deg, pitch_deg, roll_deg)
+    return np.asarray(
+        [
+            _quat_rotate(q_rot, position - wrist_anchor) + workspace_xyz
+            for position in np.asarray(qpos[:, :3], dtype=np.float64)
+        ],
+        dtype=np.float64,
+    )
+
+
+def _top_down_camera_preset(
+    *position_groups: np.ndarray,
+    vertical_fov_deg: float = 50.0,
+    aspect_ratio: float = 16.0 / 9.0,
+    margin: float = 1.20,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return a canonical world -Z camera fitted to the table and task path.
+
+    Orientation is fixed, but center and height are derived from the current
+    workspace. The camera therefore remains useful across tasks without
+    encoding a mug-specific pose or claiming to recover the source camera.
+    """
+    table_half_x, table_half_y = float(TABLE_HALF[0]), float(TABLE_HALF[1])
+    xy_groups = [
+        np.array(
+            [
+                [-table_half_x, -table_half_y],
+                [table_half_x, table_half_y],
+            ],
+            dtype=np.float64,
+        )
+    ]
+    max_z = TABLE_TOP_Z + 0.60  # leave room for the arm above the work surface
+    for positions in position_groups:
+        values = np.asarray(positions, dtype=np.float64)
+        if values.ndim != 2 or values.shape[1] < 3:
+            continue
+        values = values[:, :3]
+        values = values[np.all(np.isfinite(values), axis=1)]
+        if not len(values):
+            continue
+        # Robust bounds prevent a single reconstruction spike from making the
+        # task unreadably small, while the full tabletop is always retained.
+        xy_groups.append(np.percentile(values[:, :2], [5.0, 95.0], axis=0))
+        max_z = max(max_z, float(np.percentile(values[:, 2], 95.0)))
+
+    bounds = np.concatenate(xy_groups, axis=0)
+    lower = bounds.min(axis=0)
+    upper = bounds.max(axis=0)
+    center_xy = 0.5 * (lower + upper)
+    half_xy = 0.5 * (upper - lower)
+    fov = float(np.clip(vertical_fov_deg, 10.0, 120.0))
+    fit_half_height = max(
+        float(half_xy[1]),
+        float(half_xy[0]) / max(aspect_ratio, 1e-6),
+    ) * margin
+    clearance = fit_half_height / np.tan(0.5 * np.deg2rad(fov))
+    target = np.array([center_xy[0], center_xy[1], TABLE_TOP_Z], dtype=np.float64)
+    origin = np.array([center_xy[0], center_xy[1], max_z + clearance], dtype=np.float64)
+    camera_up = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+    return origin, target, camera_up
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -1354,6 +1427,71 @@ def main(args: argparse.Namespace) -> None:
     # what you see matches the underlying world frame.
     mj_scene.camera_tracking_enabled = False
 
+    top_down_camera: list[tuple[np.ndarray, np.ndarray, np.ndarray] | None] = [None]
+
+    def refresh_top_down_camera(
+        *,
+        wx: float,
+        wy: float,
+        wz: float,
+        yaw: float,
+        pitch: float,
+        roll: float,
+        start_frame: int,
+        transformed_object_position: np.ndarray,
+    ) -> None:
+        if args.camera_mode != "top-down":
+            return
+        wrist_positions = _workspace_wrist_positions(
+            qpos,
+            wrist_anchor=qpos[start_frame, 0:3],
+            workspace_xyz=np.array([wx, wy, wz], dtype=np.float64),
+            yaw_deg=yaw,
+            pitch_deg=pitch,
+            roll_deg=roll,
+        )
+        preset = _top_down_camera_preset(
+            wrist_positions,
+            transformed_object_position,
+        )
+        top_down_camera[0] = preset
+        position, target, camera_up = preset
+        for client in server.get_clients().values():
+            client.camera.position = position
+            client.camera.look_at = target
+            client.camera.up_direction = camera_up
+            client.camera.fov = np.deg2rad(50.0)
+
+    @server.on_client_connect
+    def _set_top_down_camera(client: viser.ClientHandle) -> None:
+        preset = top_down_camera[0]
+        if preset is None:
+            return
+        position, target, camera_up = preset
+        client.camera.position = position
+        client.camera.look_at = target
+        client.camera.up_direction = camera_up
+        client.camera.fov = np.deg2rad(50.0)
+
+    refresh_top_down_camera(
+        wx=args.workspace_x,
+        wy=args.workspace_y,
+        wz=args.workspace_z,
+        yaw=args.workspace_yaw,
+        pitch=args.workspace_pitch,
+        roll=args.workspace_roll,
+        start_frame=args.start_frame,
+        transformed_object_position=object_position,
+    )
+    if top_down_camera[0] is not None:
+        position, target, camera_up = top_down_camera[0]
+        print(
+            "Top-down camera: position="
+            f"{np.round(position, 4).tolist()}, "
+            f"look_at={np.round(target, 4).tolist()}, "
+            f"up={np.round(camera_up, 4).tolist()}"
+        )
+
     # Parent both reference frames under /fixed_bodies so that if tracking
     # ever gets toggled back on (its position is set to the tracking offset
     # each frame), our markers slide along with the rest of the scene.
@@ -1587,6 +1725,16 @@ def main(args: argparse.Namespace) -> None:
                 )
                 object_position[:] = transformed_position
                 object_quaternion[:] = transformed_quaternion
+                refresh_top_down_camera(
+                    wx=float(ws_x.value),
+                    wy=float(ws_y.value),
+                    wz=float(ws_z.value),
+                    yaw=float(ws_yaw.value),
+                    pitch=float(ws_pitch.value),
+                    roll=float(ws_roll.value),
+                    start_frame=sf_idx,
+                    transformed_object_position=transformed_position,
+                )
                 col_line = ""
                 if ik_solver.collision_limit is not None:
                     clr = ik_solver.worst_clearance
@@ -1689,6 +1837,15 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Output presentation selected by deployment/run_pipeline.sh: "
             "auto maps ego to hand-only and exo/legacy input to full-arm."
+        ),
+    )
+    p.add_argument(
+        "--camera-mode",
+        choices=("auto", "scene", "top-down"),
+        default="auto",
+        help=(
+            "Full-arm viewer camera preset. top-down fixes the optical axis "
+            "to world -Z and automatically frames the table and task path."
         ),
     )
     p.add_argument(

@@ -18,14 +18,36 @@ PYTHON_CANDIDATES=(
 )
 
 ENTRYPOINT="launch.py"
-if [[ "${1:-}" == "replay" ]]; then
-    ENTRYPOINT="replay_viser.py"
-    shift
-fi
+NEEDS_HEADLESS_GL=0
+case "${1:-}" in
+    replay)
+        ENTRYPOINT="replay_viser.py"
+        shift
+        ;;
+    capture-replay)
+        ENTRYPOINT="capture_replay_frames.py"
+        shift
+        ;;
+    render-evolution)
+        ENTRYPOINT="render_optimization_evolution.py"
+        NEEDS_HEADLESS_GL=1
+        shift
+        ;;
+esac
 
 for candidate in "${PYTHON_CANDIDATES[@]}"; do
     if [[ -n "$candidate" && -x "$candidate" ]]; then
         cd "$HERE"
+        if [[ "$NEEDS_HEADLESS_GL" -eq 1 && -z "${DISPLAY:-}" && -z "${MUJOCO_GL:-}" ]]; then
+            if ! command -v xvfb-run >/dev/null 2>&1; then
+                cat >&2 <<'EOF'
+Headless MuJoCo rendering requires xvfb-run when DISPLAY and MUJOCO_GL are unset.
+Install Xvfb, or explicitly configure a working MuJoCo GL backend.
+EOF
+                exit 1
+            fi
+            exec xvfb-run -a env MUJOCO_GL=glx "$candidate" "$ENTRYPOINT" "$@"
+        fi
         exec "$candidate" "$ENTRYPOINT" "$@"
     fi
 done

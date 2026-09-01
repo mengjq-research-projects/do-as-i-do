@@ -7,8 +7,9 @@
 这是 Do as I Do 的代码发布版本：从单段手物交互演示视频出发，先重建物体与
 手部运动，再将该运动重定向到机器人手。ego 输入可直接得到第一视角 Sharpa＋
 物体回放；完整机器人路径还会生成可由 MuJoCo 与 Isaac Sim 共同消费的
-UR3e＋Sharpa＋物体运动学场景。完整目录关系、数据协议和端到端命令见
-[`PROJECT_STRUCTURE_AND_WORKFLOW.md`](PROJECT_STRUCTURE_AND_WORKFLOW.md)。
+UR3e＋Sharpa＋物体运动学场景。各阶段入口和数据边界见本文；Ego Mug 从原始
+视频到最终回放、展示视频的完整实验回溯见
+[`EGO_DEMO_WALKTHROUGH.md`](EGO_DEMO_WALKTHROUGH.md)。
 
 ## 流程概览
 
@@ -149,6 +150,10 @@ cd retargeting
 ```
 
 该阶段读取 reconstruction 的输出，构建 MuJoCo 场景、求解 IK，并执行 MuJoCo Warp 物理优化。完整安装说明见 [`retargeting/README.md`](retargeting/README.md)。
+`mug_pickplace_10s` Ego 案例从原始 MP4、data-id 0–5 到最终回放的完整命令历史、
+约束演进、overfitting 归因和后期目标 RL 展示统一记录在
+[`EGO_DEMO_WALKTHROUGH.md`](EGO_DEMO_WALKTHROUGH.md)；Retargeting 参数说明见
+[`retargeting/README.md` 的 Ego Mug 回归案例](retargeting/README.md#ego-mug-回归案例从原始-mp4-到-data-id-5)。
 看到 `Saved info to .../trajectory_mjwp.npz`、最终 tracking error 和
 `Optimization complete` 后，结果已经完整保存；如果 Viser 继续保持服务，
 此时可以安全按 `Ctrl+C` 返回终端。
@@ -219,15 +224,20 @@ cd "$(git rev-parse --show-toplevel)"
 
 # 即使输入是 ego，也强制生成/显示完整 UR3e
 ./deployment/run_pipeline.sh mujoco-replay \
-    --viewpoint ego --render-mode full-arm --side right \
+    --viewpoint ego --render-mode full-arm --camera-mode top-down --side right \
     --traj retargeting/outputs/sharpa/right/<task>/<id>/trajectory_mjwp.npz
 ```
+
+`--camera-mode top-down` 是与原视频相机参数无关的规范俯视模式：方向固定为世界
+`-Z`，但中心和高度会根据完整工作台以及当前手腕/物体轨迹自动计算，不会写死某个
+任务的相机坐标。
 
 `mujoco-replay` 会自动复用一键离线安装创建的托管 Retargeting 环境，不需要
 额外创建 Deployment 环境。`hand-only` 直接读取已有 Retargeting 结果，不会
 重新运行优化或机械臂 IK。`full-arm` 模式点击 **Save retarget** 后会同时保存
-机械臂、手指、物体轨迹、最终场景 XML 和 manifest；校验与 Isaac 完整场景命令见
-[`PROJECT_STRUCTURE_AND_WORKFLOW.md`](PROJECT_STRUCTURE_AND_WORKFLOW.md)。
+机械臂、手指、物体轨迹、最终场景 XML 和 manifest；包校验命令见
+[`deployment/README.md`](deployment/README.md)，Isaac 完整场景命令见
+[`isaac_export/README.md`](isaac_export/README.md)。
 对于没有已保存参考包、且命令行没有指定 `--workspace-*` 的新任务，入口会
 根据整段腕部轨迹自动拟合工作空间，并用采样帧选择 IK 初始分支。手工传入任意
 `--workspace-*` 参数，或目录中已有 `trajectory_dual_ur3e.npz` 时，手工/已保存

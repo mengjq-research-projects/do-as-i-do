@@ -182,6 +182,250 @@ def _interp_rotations(
     return out
 
 
+def _extrapolate_terminal_hand_translation(
+    joints: np.ndarray,
+    vertices: np.ndarray,
+    valid_mask: np.ndarray,
+    velocity_window: int = 12,
+    max_speed_per_frame: float = 0.06,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Rigidly continue a hand's final observed retreat through a lost suffix.
+
+    Monocular hand trackers commonly lose the hand as it exits the image. A
+    boundary-clamped interpolation then leaves a robot hand frozen beside the
+    placed object. This explicit task prior estimates robust wrist velocity
+    from the final valid observations and translates the last reconstructed
+    hand rigidly through the invalid suffix. It is intentionally opt-in: loss
+    of tracking does not always imply retreat.
+
+    Returns corrected joints, vertices, and the per-frame translation offsets.
+    """
+    joints = np.asarray(joints, dtype=np.float64)
+    vertices = np.asarray(vertices, dtype=np.float64)
+    valid = np.asarray(valid_mask, dtype=bool)
+    if joints.ndim != 3 or joints.shape[-1] != 3:
+        raise ValueError("joints must have shape (N, J, 3)")
+    if vertices.ndim != 3 or vertices.shape[0] != joints.shape[0] or vertices.shape[-1] != 3:
+        raise ValueError("vertices must have shape (N, V, 3)")
+    if valid.shape != (joints.shape[0],):
+        raise ValueError("valid_mask must have shape (N,)")
+
+    offsets = np.zeros((joints.shape[0], 3), dtype=np.float64)
+    valid_indices = np.flatnonzero(valid)
+    if len(valid_indices) < 3:
+        return joints.copy(), vertices.copy(), offsets
+    last = int(valid_indices[-1])
+    if last >= joints.shape[0] - 1:
+        return joints.copy(), vertices.copy(), offsets
+
+    recent = valid_indices[-max(3, int(velocity_window)) :]
+    # A tracker often repeats its last estimate for several still-marked-valid
+    # frames before it finally reports loss.  A median of adjacent differences
+    # then collapses to zero even though the hand was clearly retreating just
+    # before the plateau.  Use a component-wise Theil-Sen slope over every
+    # pair in the recent window instead; it is robust to both a short frozen
+    # tail and isolated monocular-position spikes.
+    pairwise_slopes = []
+    for i in range(len(recent) - 1):
+        for j in range(i + 1, len(recent)):
+            dt = float(recent[j] - recent[i])
+            if dt > 0.0:
+                pairwise_slopes.append(
+                    (joints[recent[j], 0, :] - joints[recent[i], 0, :]) / dt
+                )
+    if not pairwise_slopes:
+        return joints.copy(), vertices.copy(), offsets
+    velocity = np.median(np.asarray(pairwise_slopes), axis=0)
+    speed = float(np.linalg.norm(velocity))
+    if not np.isfinite(speed) or speed < 1e-6:
+        return joints.copy(), vertices.copy(), offsets
+    if speed > max_speed_per_frame:
+        velocity *= max_speed_per_frame / speed
+
+    suffix_steps = np.arange(1, joints.shape[0] - last, dtype=np.float64)
+    offsets[last + 1 :] = suffix_steps[:, None] * velocity[None]
+    out_joints = joints.copy()
+    out_vertices = vertices.copy()
+    out_joints[last + 1 :] = joints[last] + offsets[last + 1 :, None, :]
+    out_vertices[last + 1 :] = vertices[last] + offsets[last + 1 :, None, :]
+    return out_joints, out_vertices, offsets
+
+
+def _stabilize_hand_grasp_anchor(
+    joints: np.ndarray,
+    vertices: np.ndarray,
+    obj_trans: np.ndarray,
+    obj_quat_wxyz: np.ndarray,
+    anchor_local: tuple[float, float, float] | np.ndarray,
+    aperture_thresh: float = 0.06,
+    acquisition_dist_thresh: float = 0.04,
+    fade_frames: int = 5,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[int, int] | None]:
+    """Keep the thumb-index pinch point on a semantic object-local anchor.
+
+    Hand and object monocular reconstructions can be individually correct in
+    image space yet drift by several centimetres relative to one another in
+    3-D.  For a known handle grasp, this opt-in prior identifies the closed
+    thumb/index interval near ``anchor_local`` and rigidly translates the hand
+    so the pinch midpoint stays on that anchor.  Finger articulation and the
+    full object trajectory are unchanged.
+
+    A fixed boundary correction is faded immediately before/after the grasp
+    interval to avoid introducing jumps while still allowing the hand to open
+    and retreat naturally after release.
+    """
+    joints = np.asarray(joints, dtype=np.float64)
+    vertices = np.asarray(vertices, dtype=np.float64)
+    obj_trans = np.asarray(obj_trans, dtype=np.float64)
+    obj_quat_wxyz = np.asarray(obj_quat_wxyz, dtype=np.float64)
+    anchor = np.asarray(anchor_local, dtype=np.float64)
+    if joints.ndim != 3 or joints.shape[-1] != 3:
+        raise ValueError("joints must have shape (N, J, 3)")
+    if vertices.ndim != 3 or vertices.shape[0] != joints.shape[0] or vertices.shape[-1] != 3:
+        raise ValueError("vertices must have shape (N, V, 3)")
+    if obj_trans.shape != (joints.shape[0], 3):
+        raise ValueError("obj_trans must have shape (N, 3)")
+    if obj_quat_wxyz.shape != (joints.shape[0], 4):
+        raise ValueError("obj_quat_wxyz must have shape (N, 4)")
+    if anchor.shape != (3,) or not np.isfinite(anchor).all():
+        raise ValueError("anchor_local must contain three finite values")
+
+    rotations = Rotation.from_quat(obj_quat_wxyz[:, [1, 2, 3, 0]])
+    thumb = joints[:, FINGERTIP_JOINT_IDX[0], :]
+    index = joints[:, FINGERTIP_JOINT_IDX[1], :]
+    pinch_world = 0.5 * (thumb + index)
+    pinch_local = rotations.inv().apply(pinch_world - obj_trans)
+    aperture = np.linalg.norm(thumb - index, axis=1)
+    anchor_dist = np.linalg.norm(pinch_local - anchor[None, :], axis=1)
+    acquired = (aperture < float(aperture_thresh)) & (
+        anchor_dist < float(acquisition_dist_thresh)
+    )
+    acquired_idx = np.flatnonzero(acquired)
+    offsets = np.zeros((joints.shape[0], 3), dtype=np.float64)
+    if acquired_idx.size == 0:
+        return joints.copy(), vertices.copy(), offsets, None
+
+    start = int(acquired_idx[0])
+    end = int(acquired_idx[-1])
+    correction_local = anchor[None, :] - pinch_local
+    correction_world = rotations.apply(correction_local)
+    offsets[start : end + 1] = correction_world[start : end + 1]
+
+    fade = max(0, int(fade_frames))
+    for step in range(1, fade + 1):
+        weight = 1.0 - step / float(fade + 1)
+        before = start - step
+        after = end + step
+        if before >= 0:
+            offsets[before] = weight * correction_world[start]
+        if after < len(offsets):
+            offsets[after] = weight * correction_world[end]
+
+    out_joints = joints + offsets[:, None, :]
+    out_vertices = vertices + offsets[:, None, :]
+    return out_joints, out_vertices, offsets, (start, end)
+
+
+def _axis_from_label(label: str) -> np.ndarray:
+    """Convert a signed mesh-axis label (for example ``+y``) to XYZ."""
+    if label not in {"+x", "-x", "+y", "-y", "+z", "-z"}:
+        raise ValueError(
+            "object_up_axis must be one of +x, -x, +y, -y, +z, -z; "
+            f"got {label!r}"
+        )
+    axis = np.zeros(3, dtype=np.float64)
+    axis[{"x": 0, "y": 1, "z": 2}[label[1]]] = 1.0 if label[0] == "+" else -1.0
+    return axis
+
+
+def _resolve_object_up(
+    local_up_axis: str,
+    local_up_vector: tuple[float, float, float] | np.ndarray | None = None,
+) -> np.ndarray:
+    """Resolve and normalize an exact or signed-axis semantic up vector."""
+    if local_up_vector is None:
+        return _axis_from_label(local_up_axis)
+    vector = np.asarray(local_up_vector, dtype=np.float64)
+    if vector.shape != (3,) or not np.isfinite(vector).all():
+        raise ValueError("object_up_vector must contain three finite values")
+    norm = float(np.linalg.norm(vector))
+    if norm < 1e-8:
+        raise ValueError("object_up_vector must be non-zero")
+    return vector / norm
+
+
+def _project_object_quaternions_upright(
+    quat_wxyz: np.ndarray,
+    local_up_axis: str = "+z",
+    local_up_vector: tuple[float, float, float] | np.ndarray | None = None,
+) -> np.ndarray:
+    """Remove object roll/pitch while preserving its horizontal heading.
+
+    This is an explicit task prior for objects such as a mug in a pick/place
+    demonstration where a known mesh-local semantic axis remains parallel to
+    gravity. It must not be enabled for pouring or other tasks with intended
+    object tilt. ``local_up_axis`` identifies the direction pointing out of an
+    upright object's top/opening; reconstructed meshes do not necessarily use
+    local +Z for that direction.
+
+    Heading is measured using a stable local direction perpendicular to the
+    semantic up axis. Returned quaternions use MuJoCo's wxyz convention and
+    are sign-aligned over time for deterministic interpolation downstream.
+    """
+    quat_wxyz = np.asarray(quat_wxyz, dtype=np.float64)
+    if quat_wxyz.ndim != 2 or quat_wxyz.shape[1] != 4:
+        raise ValueError(
+            "quat_wxyz must have shape (N, 4); "
+            f"got {quat_wxyz.shape}"
+        )
+    if not np.isfinite(quat_wxyz).all():
+        raise ValueError("quat_wxyz contains non-finite values")
+
+    axis = _resolve_object_up(local_up_axis, local_up_vector)
+    canonical_upright, _ = Rotation.align_vectors(
+        np.asarray([[0.0, 0.0, 1.0]]), axis[None]
+    )
+    # Pick the local direction which canonical_upright maps onto world +X.
+    # It is therefore perpendicular to the requested semantic up axis and
+    # remains a valid yaw reference for every supported signed axis.
+    local_heading = canonical_upright.inv().apply([1.0, 0.0, 0.0])
+    rotations = Rotation.from_quat(quat_wxyz[:, [1, 2, 3, 0]])
+    heading_world = rotations.apply(
+        np.broadcast_to(local_heading, (len(rotations), 3))
+    )
+    heading_norm = np.linalg.norm(heading_world[:, :2], axis=1)
+    if np.any(heading_norm < 1e-8):
+        raise ValueError("Object rotation has no stable horizontal heading")
+    yaw = np.arctan2(heading_world[:, 1], heading_world[:, 0])
+    upright_xyzw = (
+        Rotation.from_euler("z", yaw[:, None]) * canonical_upright
+    ).as_quat()
+    upright_wxyz = upright_xyzw[:, [3, 0, 1, 2]]
+    for i in range(1, len(upright_wxyz)):
+        if np.dot(upright_wxyz[i], upright_wxyz[i - 1]) < 0.0:
+            upright_wxyz[i] *= -1.0
+    return upright_wxyz
+
+
+def _rotate_points_per_frame(
+    points: np.ndarray,
+    origins: np.ndarray,
+    rotations: Rotation,
+) -> np.ndarray:
+    """Apply one world rotation per frame around matching frame origins."""
+    points = np.asarray(points, dtype=np.float64)
+    origins = np.asarray(origins, dtype=np.float64)
+    if points.ndim < 2 or points.shape[0] != origins.shape[0]:
+        raise ValueError("points and origins must have matching frame counts")
+    if points.shape[-1] != 3 or origins.shape != (points.shape[0], 3):
+        raise ValueError("points must end in XYZ and origins must have shape (N, 3)")
+
+    frame_count = points.shape[0]
+    centered = points.reshape(frame_count, -1, 3) - origins[:, None, :]
+    rotated = np.einsum("nij,nkj->nki", rotations.as_matrix(), centered)
+    return (rotated + origins[:, None, :]).reshape(points.shape)
+
+
 def _velocity_position(x: np.ndarray) -> np.ndarray:
     return np.linalg.norm(np.diff(x, axis=0), axis=-1)
 
@@ -416,6 +660,11 @@ def main(
     dataset_name: str = "do_as_i_do",
     force: bool = False,
     start_frame: int = 0,
+    object_upright: bool = False,
+    object_up_axis: str = "+z",
+    object_up_vector: tuple[float, float, float] | None = None,
+    terminal_hand_retreat: bool = False,
+    hand_grasp_anchor_vector: tuple[float, float, float] | None = None,
 ) -> str:
     output_root_dir = os.path.abspath(output_root_dir)
     raw_dir = os.path.abspath(raw_dir)
@@ -743,6 +992,124 @@ def main(
         left_betas = _interp_positions(left_betas, shared_mask)
         left_fingertips = left_joints[:, FINGERTIP_JOINT_IDX, :]
 
+    if terminal_hand_retreat:
+        for side in ("right", "left"):
+            if side == "right" and process_right:
+                right_joints, right_vertices, retreat_offsets = (
+                    _extrapolate_terminal_hand_translation(
+                        right_joints, right_vertices, right_valid_mask
+                    )
+                )
+                right_fingertips = right_joints[:, FINGERTIP_JOINT_IDX, :]
+            elif side == "left" and process_left:
+                left_joints, left_vertices, retreat_offsets = (
+                    _extrapolate_terminal_hand_translation(
+                        left_joints, left_vertices, left_valid_mask
+                    )
+                )
+                left_fingertips = left_joints[:, FINGERTIP_JOINT_IDX, :]
+            else:
+                continue
+            moved = np.linalg.norm(retreat_offsets, axis=1) > 0.0
+            if moved.any():
+                loguru.logger.info(
+                    f"Applied terminal {side}-hand retreat prior over "
+                    f"{int(moved.sum())} tracker-lost frames; final rigid "
+                    f"translation={retreat_offsets[-1].round(4).tolist()}"
+                )
+
+    if object_upright:
+        object_rotations_before = Rotation.from_quat(
+            obj_quat_cam[:, [1, 2, 3, 0]]
+        )
+        semantic_up = _resolve_object_up(object_up_axis, object_up_vector)
+        up_before = object_rotations_before.apply(
+            np.broadcast_to(semantic_up, (N, 3))
+        )
+        tilt_before_deg = np.degrees(
+            np.arccos(
+                np.clip(up_before[:, 2], -1.0, 1.0)
+            )
+        )
+        obj_quat_cam = _project_object_quaternions_upright(
+            obj_quat_cam, object_up_axis, object_up_vector
+        )
+        object_rotations_after = Rotation.from_quat(
+            obj_quat_cam[:, [1, 2, 3, 0]]
+        )
+        correction = object_rotations_after * object_rotations_before.inv()
+        if process_right:
+            right_joints = _rotate_points_per_frame(
+                right_joints, obj_trans_cam, correction
+            )
+            right_vertices = _rotate_points_per_frame(
+                right_vertices, obj_trans_cam, correction
+            )
+            right_rot = (
+                correction * Rotation.from_rotvec(right_rot)
+            ).as_rotvec()
+            right_fingertips = right_joints[:, FINGERTIP_JOINT_IDX, :]
+        if process_left:
+            left_joints = _rotate_points_per_frame(
+                left_joints, obj_trans_cam, correction
+            )
+            left_vertices = _rotate_points_per_frame(
+                left_vertices, obj_trans_cam, correction
+            )
+            left_rot = (
+                correction * Rotation.from_rotvec(left_rot)
+            ).as_rotvec()
+            left_fingertips = left_joints[:, FINGERTIP_JOINT_IDX, :]
+        loguru.logger.info(
+            "Applied object-upright prior (mesh-local semantic up "
+            f"{semantic_up.round(5).tolist()} "
+            "→ world +Z); "
+            f"removed tilt median={np.median(tilt_before_deg):.2f}°, "
+            f"max={np.max(tilt_before_deg):.2f}° while preserving yaw and "
+            "hand-object relative geometry"
+        )
+
+    if hand_grasp_anchor_vector is not None:
+        anchor = np.asarray(hand_grasp_anchor_vector, dtype=np.float64)
+        for side in ("right", "left"):
+            if side == "right" and process_right:
+                right_joints, right_vertices, anchor_offsets, anchor_span = (
+                    _stabilize_hand_grasp_anchor(
+                        right_joints,
+                        right_vertices,
+                        obj_trans_cam,
+                        obj_quat_cam,
+                        anchor,
+                    )
+                )
+                right_fingertips = right_joints[:, FINGERTIP_JOINT_IDX, :]
+            elif side == "left" and process_left:
+                left_joints, left_vertices, anchor_offsets, anchor_span = (
+                    _stabilize_hand_grasp_anchor(
+                        left_joints,
+                        left_vertices,
+                        obj_trans_cam,
+                        obj_quat_cam,
+                        anchor,
+                    )
+                )
+                left_fingertips = left_joints[:, FINGERTIP_JOINT_IDX, :]
+            else:
+                continue
+            if anchor_span is None:
+                loguru.logger.warning(
+                    f"{side}: hand grasp anchor {anchor.round(5).tolist()} "
+                    "was never acquired; reference unchanged"
+                )
+            else:
+                moved = np.linalg.norm(anchor_offsets, axis=1)
+                loguru.logger.info(
+                    f"Applied {side}-hand grasp anchor "
+                    f"{anchor.round(5).tolist()} over frames "
+                    f"{anchor_span[0]}..{anchor_span[1]}; "
+                    f"max rigid correction={moved.max():.4f} m"
+                )
+
     # Downstream wrist-frame construction calls SciPy Rotation/SVD and cannot
     # produce a meaningful result from NaN inputs.  Keep the failure here
     # explicit in case a future producer introduces a new invalid field that
@@ -1011,6 +1378,17 @@ def main(
         mano_betas_left=mano_betas_left,
         capture_viewpoint=np.asarray(capture_metadata["viewpoint"]),
         capture_camera_motion=np.asarray(capture_metadata["camera_motion"]),
+        object_upright=np.asarray(object_upright),
+        object_up_axis=np.asarray(object_up_axis),
+        object_up_vector=np.asarray(
+            semantic_up if object_upright else _resolve_object_up(object_up_axis)
+        ),
+        terminal_hand_retreat=np.asarray(terminal_hand_retreat),
+        hand_grasp_anchor_vector=np.asarray(
+            hand_grasp_anchor_vector
+            if hand_grasp_anchor_vector is not None
+            else np.empty((0,), dtype=np.float64)
+        ),
     )
     loguru.logger.info(f"Saved trajectory_keypoints.npz → {out_data_dir}")
 
@@ -1024,6 +1402,19 @@ def main(
         "embodiment_type": embodiment_type,
         "data_id": data_id,
         "capture": capture_metadata,
+        "object_upright": object_upright,
+        "object_up_axis": object_up_axis,
+        "object_up_vector": (
+            semantic_up.tolist()
+            if object_upright
+            else _resolve_object_up(object_up_axis).tolist()
+        ),
+        "terminal_hand_retreat": terminal_hand_retreat,
+        "hand_grasp_anchor_vector": (
+            list(hand_grasp_anchor_vector)
+            if hand_grasp_anchor_vector is not None
+            else None
+        ),
         # decompose_mesh.py prepends output_root_dir, so store a relative path.
         # For bimanual with a single shared object, only right_object_mesh_dir
         # is set (left_object_mesh_dir=None signals a shared object).

@@ -51,6 +51,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 import trimesh
+from scipy.spatial.transform import Rotation
 
 from retargeting.utils import viser_viewer
 
@@ -91,11 +92,12 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--camera-mode",
-        choices=("auto", "ego", "scene"),
+        choices=("auto", "ego", "scene", "top-down"),
         default="auto",
         help=(
             "Viewer camera preset. auto selects ego for ego input and the "
-            "ordinary scene camera otherwise."
+            "ordinary scene camera otherwise; top-down is a canonical world "
+            "-Z view independent of the source camera."
         ),
     )
     p.add_argument(
@@ -103,6 +105,58 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=60.0,
         help="Vertical field of view in degrees for the ego camera preset.",
+    )
+    p.add_argument(
+        "--ego-distance",
+        type=float,
+        default=0.0,
+        help=(
+            "Distance in metres from the ego camera to the trajectory centre. "
+            "Values <= 0 select a distance automatically."
+        ),
+    )
+    p.add_argument(
+        "--display-object-upright",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Project the displayed object's semantic up axis onto world +Z "
+            "and apply the same rigid correction to the hand root, preserving "
+            "hand-object relative geometry. Disabled by default; production "
+            "upright correction belongs upstream."
+        ),
+    )
+    p.add_argument(
+        "--display-object-up-axis",
+        choices=("+x", "-x", "+y", "-y", "+z", "-z"),
+        default="+z",
+        help=(
+            "Mesh-local direction that points out of the object's top/opening. "
+            "For this reconstructed mug use +z. Only affects upright display."
+        ),
+    )
+    p.add_argument(
+        "--display-object-up-vector",
+        type=float,
+        nargs=3,
+        default=None,
+        metavar=("X", "Y", "Z"),
+        help=(
+            "Exact mesh-local semantic up vector. Overrides "
+            "--display-object-up-axis; useful when reconstruction leaves the "
+            "mesh geometry tilted relative to its coordinate axes."
+        ),
+    )
+    p.add_argument(
+        "--display-hand-level",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Diagnostic-only rotation of the displayed hand/reference scene "
+            "toward the world XY plane. This changes its pose independently "
+            "of the object and must not be used to judge contact. Disabled by "
+            "default."
+        ),
     )
     p.add_argument(
         "--skip-warmup",
@@ -149,40 +203,153 @@ def _ego_camera_preset(
     qpos: np.ndarray,
     start: int,
     keypoints_path: Path | None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return a stable camera origin and look-at target in Retargeting world space."""
+    requested_distance: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return a stable, downward-looking ego presentation camera.
+
+    Reconstruction has no per-frame camera extrinsics.  The keypoint package
+    does retain the gravity-aligned optical axis, however, so preserve its
+    horizontal heading while placing a stabilized camera above the combined
+    hand/object trajectory.  ``camera_origin_world`` is intentionally not used:
+    its height is tied to the arbitrary floor lift and can therefore land below
+    the Retargeting scene.
+    """
     roots = np.asarray(qpos[start:, :3], dtype=np.float64)
     roots = roots[np.all(np.isfinite(roots), axis=1)]
-    target = np.median(roots, axis=0) if len(roots) else np.zeros(3)
-    origin: np.ndarray | None = None
+    focus_groups = [roots] if len(roots) else []
+    forward: np.ndarray | None = None
 
     if keypoints_path is not None and keypoints_path.is_file():
         try:
             with np.load(str(keypoints_path), allow_pickle=False) as data:
-                if "camera_origin_world" in data.files:
-                    candidate = np.asarray(data["camera_origin_world"], dtype=np.float64)
+                if "camera_forward_world" in data.files:
+                    candidate = np.asarray(
+                        data["camera_forward_world"], dtype=np.float64
+                    )
                     if candidate.shape == (3,) and np.all(np.isfinite(candidate)):
-                        origin = candidate
-                elif "centering_offset" in data.files:
-                    # Older output did not persist world_offset. Its x/y exactly
-                    # equal centering_offset x/y; choose camera height relative
-                    # to the visible hand because the old floor-lift z is absent.
-                    centering = np.asarray(data["centering_offset"], dtype=np.float64)
-                    if centering.shape == (3,) and np.all(np.isfinite(centering)):
-                        origin = np.array(
-                            [-centering[0], -centering[1], target[2] + 0.12],
-                            dtype=np.float64,
-                        )
+                        forward = candidate
+                for key in (
+                    "qpos_wrist_right",
+                    "qpos_wrist_left",
+                    "qpos_obj_right",
+                    "qpos_obj_left",
+                ):
+                    if key not in data.files:
+                        continue
+                    xyz = np.asarray(data[key], dtype=np.float64)
+                    if xyz.ndim != 2 or xyz.shape[1] < 3:
+                        continue
+                    xyz = xyz[:, :3]
+                    xyz = xyz[np.all(np.isfinite(xyz), axis=1)]
+                    if len(xyz) and np.any(np.linalg.norm(xyz, axis=1) > 1e-6):
+                        focus_groups.append(xyz)
         except (OSError, ValueError):
             pass
 
-    if origin is None or not np.all(np.isfinite(origin)):
-        # Last-resort presentation preset for legacy/custom run layouts.
-        origin = target + np.array([0.0, -0.45, 0.12])
-    distance = float(np.linalg.norm(target - origin))
-    if not np.isfinite(distance) or distance < 0.10:
-        origin = target + np.array([0.0, -0.45, 0.12])
-    return origin, target
+    if focus_groups:
+        focus = np.concatenate(focus_groups, axis=0)
+        lower = np.percentile(focus, 5.0, axis=0)
+        upper = np.percentile(focus, 95.0, axis=0)
+        target = (lower + upper) * 0.5
+        span = float(np.linalg.norm(upper - lower))
+    else:
+        target = np.zeros(3, dtype=np.float64)
+        span = 0.45
+
+    if forward is None or not np.all(np.isfinite(forward)):
+        forward = np.array([0.0, 1.0, -0.65], dtype=np.float64)
+    else:
+        forward = forward.copy()
+        # GeoCalib's gravity convention can leave the saved optical axis with
+        # the correct table heading but an upward Z sign. Ego manipulation
+        # footage must look down towards the work surface.
+        forward[2] = -abs(float(forward[2]))
+        if abs(float(forward[2])) < 0.25:
+            forward[2] = -0.45
+    forward_norm = float(np.linalg.norm(forward))
+    if not np.isfinite(forward_norm) or forward_norm < 1e-8:
+        forward = np.array([0.0, 1.0, -0.65], dtype=np.float64)
+        forward_norm = float(np.linalg.norm(forward))
+    forward /= forward_norm
+
+    if np.isfinite(requested_distance) and requested_distance > 0.0:
+        distance = float(requested_distance)
+    else:
+        distance = float(np.clip(1.6 * max(span, 0.40), 0.65, 1.25))
+    origin = target - forward * distance
+
+    world_up = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    right = np.cross(forward, world_up)
+    right_norm = float(np.linalg.norm(right))
+    if right_norm < 1e-8:
+        right = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+    else:
+        right /= right_norm
+    camera_up = np.cross(right, forward)
+    camera_up /= np.linalg.norm(camera_up)
+    return origin, target, camera_up
+
+
+def _top_down_camera_preset(
+    qpos: np.ndarray,
+    start: int,
+    keypoints_path: Path | None,
+    *,
+    vertical_fov_deg: float,
+    aspect_ratio: float = 16.0 / 9.0,
+    margin: float = 1.20,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Frame the hand/object path with a canonical world -Z camera.
+
+    The orientation is deterministic, while the look-at point and height are
+    fitted to robust trajectory bounds. This deliberately does not pretend to
+    recover unknown source-camera intrinsics or extrinsics.
+    """
+    focus_groups: list[np.ndarray] = []
+    roots = np.asarray(qpos[start:, :3], dtype=np.float64)
+    roots = roots[np.all(np.isfinite(roots), axis=1)]
+    if len(roots):
+        focus_groups.append(roots)
+
+    if keypoints_path is not None and keypoints_path.is_file():
+        try:
+            with np.load(str(keypoints_path), allow_pickle=False) as data:
+                for key in (
+                    "qpos_wrist_right",
+                    "qpos_wrist_left",
+                    "qpos_obj_right",
+                    "qpos_obj_left",
+                ):
+                    if key not in data.files:
+                        continue
+                    xyz = np.asarray(data[key], dtype=np.float64)
+                    if xyz.ndim != 2 or xyz.shape[1] < 3:
+                        continue
+                    xyz = xyz[:, :3]
+                    xyz = xyz[np.all(np.isfinite(xyz), axis=1)]
+                    if len(xyz) and np.any(np.linalg.norm(xyz, axis=1) > 1e-6):
+                        focus_groups.append(xyz)
+        except (OSError, ValueError):
+            pass
+
+    if focus_groups:
+        focus = np.concatenate(focus_groups, axis=0)
+        lower = np.percentile(focus, 5.0, axis=0)
+        upper = np.percentile(focus, 95.0, axis=0)
+    else:
+        lower = np.array([-0.25, -0.25, 0.0], dtype=np.float64)
+        upper = np.array([0.25, 0.25, 0.2], dtype=np.float64)
+
+    target = (lower + upper) * 0.5
+    half_x = max(0.5 * float(upper[0] - lower[0]), 0.20)
+    half_y = max(0.5 * float(upper[1] - lower[1]), 0.20)
+    fov = float(np.clip(vertical_fov_deg, 10.0, 120.0))
+    fit_half_height = max(half_y, half_x / max(aspect_ratio, 1e-6)) * margin
+    distance = fit_half_height / np.tan(0.5 * np.deg2rad(fov))
+    distance = max(float(distance), 0.65)
+    origin = target + np.array([0.0, 0.0, distance], dtype=np.float64)
+    camera_up = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+    return origin, target, camera_up
 
 
 def _load_run_config(config_yaml: Path) -> dict:
@@ -219,6 +386,200 @@ def load_qpos(traj_path: Path, model_nq: int) -> np.ndarray:
     return np.ascontiguousarray(qpos, dtype=np.float64)
 
 
+def _project_object_qpos_upright(
+    qpos: np.ndarray,
+    object_qpos_addresses: list[int],
+    local_up_axis: np.ndarray | None = None,
+) -> np.ndarray:
+    """Make a mesh-local semantic up axis vertical while preserving heading."""
+    out = np.asarray(qpos, dtype=np.float64).copy()
+    axis = np.asarray(
+        [0.0, 0.0, 1.0] if local_up_axis is None else local_up_axis,
+        dtype=np.float64,
+    )
+    if axis.shape != (3,) or not np.isfinite(axis).all():
+        raise ValueError("local_up_axis must be a finite XYZ vector")
+    axis_norm = float(np.linalg.norm(axis))
+    if axis_norm < 1e-8:
+        raise ValueError("local_up_axis must be non-zero")
+    axis /= axis_norm
+    canonical_upright, _ = Rotation.align_vectors(
+        np.asarray([[0.0, 0.0, 1.0]]), axis[None]
+    )
+    local_heading = canonical_upright.inv().apply([1.0, 0.0, 0.0])
+    for qadr in object_qpos_addresses:
+        quat_wxyz = out[:, qadr + 3 : qadr + 7]
+        rotations = Rotation.from_quat(quat_wxyz[:, [1, 2, 3, 0]])
+        heading_world = rotations.apply(
+            np.broadcast_to(local_heading, (len(rotations), 3))
+        )
+        yaw = np.arctan2(heading_world[:, 1], heading_world[:, 0])
+        upright_rotation = (
+            Rotation.from_euler("z", yaw[:, None]) * canonical_upright
+        )
+        upright_xyzw = upright_rotation.as_quat()
+        upright_wxyz = upright_xyzw[:, [3, 0, 1, 2]]
+        for i in range(1, len(upright_wxyz)):
+            if np.dot(upright_wxyz[i], upright_wxyz[i - 1]) < 0.0:
+                upright_wxyz[i] *= -1.0
+        out[:, qadr + 3 : qadr + 7] = upright_wxyz
+    return out
+
+
+def _project_scene_qpos_upright(
+    qpos: np.ndarray,
+    object_qpos_addresses: list[int],
+    hand_root_addresses: list[tuple[str, int, int]],
+    local_up_axis: np.ndarray | None = None,
+) -> np.ndarray:
+    """Upright an object and rigidly carry robot hand roots with it."""
+    if not object_qpos_addresses:
+        return np.asarray(qpos, dtype=np.float64).copy()
+    source = np.asarray(qpos, dtype=np.float64)
+    out = _project_object_qpos_upright(
+        source, object_qpos_addresses, local_up_axis
+    )
+    object_qadr = object_qpos_addresses[0]
+    origins = source[:, object_qadr : object_qadr + 3]
+    before_wxyz = source[:, object_qadr + 3 : object_qadr + 7]
+    after_wxyz = out[:, object_qadr + 3 : object_qadr + 7]
+    before = Rotation.from_quat(before_wxyz[:, [1, 2, 3, 0]])
+    after = Rotation.from_quat(after_wxyz[:, [1, 2, 3, 0]])
+    correction = after * before.inv()
+
+    for _side, pos_qadr, rot_qadr in hand_root_addresses:
+        relative_position = source[:, pos_qadr : pos_qadr + 3] - origins
+        out[:, pos_qadr : pos_qadr + 3] = origins + correction.apply(
+            relative_position
+        )
+        root_rotation = Rotation.from_euler(
+            "XYZ", source[:, rot_qadr : rot_qadr + 3]
+        )
+        angles = (correction * root_rotation).as_euler("XYZ")
+        out[:, rot_qadr : rot_qadr + 3] = np.unwrap(angles, axis=0)
+    return out
+
+
+def _axis_from_label(label: str) -> np.ndarray:
+    sign = 1.0 if label[0] == "+" else -1.0
+    axis = np.zeros(3, dtype=np.float64)
+    axis[{"x": 0, "y": 1, "z": 2}[label[1]]] = sign
+    return axis
+
+
+def _rotations_to_horizontal(vectors: np.ndarray) -> tuple[Rotation, np.ndarray]:
+    """Return shortest rotations that place direction vectors in world XY."""
+    vectors = np.asarray(vectors, dtype=np.float64)
+    if vectors.ndim != 2 or vectors.shape[1] != 3:
+        raise ValueError(f"vectors must have shape (N, 3); got {vectors.shape}")
+    lengths = np.linalg.norm(vectors, axis=1)
+    if np.any(lengths < 1e-8) or not np.isfinite(vectors).all():
+        raise ValueError("vectors must be finite and non-zero")
+    directions = vectors / lengths[:, None]
+    horizontal = directions.copy()
+    horizontal[:, 2] = 0.0
+    horizontal_lengths = np.linalg.norm(horizontal, axis=1)
+    if np.any(horizontal_lengths < 1e-8):
+        raise ValueError("cannot preserve heading for a vertical direction")
+    horizontal /= horizontal_lengths[:, None]
+
+    axes = np.cross(directions, horizontal)
+    axis_lengths = np.linalg.norm(axes, axis=1)
+    dots = np.sum(directions * horizontal, axis=1)
+    angles = np.arccos(np.clip(dots, -1.0, 1.0))
+    rotvecs = np.zeros_like(vectors)
+    moving = axis_lengths > 1e-10
+    rotvecs[moving] = (
+        axes[moving] / axis_lengths[moving, None] * angles[moving, None]
+    )
+    elevation_deg = np.degrees(np.arcsin(np.clip(np.abs(directions[:, 2]), 0.0, 1.0)))
+    return Rotation.from_rotvec(rotvecs), elevation_deg
+
+
+def _hand_root_qpos_addresses(
+    model: mujoco.MjModel,
+) -> list[tuple[str, int, int]]:
+    """Return (side, translation qadr, intrinsic-XYZ rotation qadr)."""
+    roots: list[tuple[str, int, int]] = []
+    for side in ("right", "left"):
+        names = [
+            f"{side}_pos_x",
+            f"{side}_pos_y",
+            f"{side}_pos_z",
+            f"{side}_rot_x",
+            f"{side}_rot_y",
+            f"{side}_rot_z",
+        ]
+        ids = [
+            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+            for name in names
+        ]
+        if any(joint_id < 0 for joint_id in ids):
+            continue
+        addresses = [int(model.jnt_qposadr[joint_id]) for joint_id in ids]
+        if addresses == list(range(addresses[0], addresses[0] + 6)):
+            roots.append((side, addresses[0], addresses[3]))
+    return roots
+
+
+def _level_robot_fingers(
+    qpos: np.ndarray,
+    model: mujoco.MjModel,
+    hand_root_addresses: list[tuple[str, int, int]],
+) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    """Level each robot hand's wrist-to-middle-tip direction per frame."""
+    out = np.asarray(qpos, dtype=np.float64).copy()
+    elevations: dict[str, np.ndarray] = {}
+    for side, _pos_qadr, rot_qadr in hand_root_addresses:
+        base_id = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_BODY, f"{side}_hand_C_MC"
+        )
+        tip_id = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_SITE, f"{side}_middle_tip"
+        )
+        if base_id < 0 or tip_id < 0:
+            continue
+        data = mujoco.MjData(model)
+        directions = np.empty((len(out), 3), dtype=np.float64)
+        for frame, pose in enumerate(out):
+            data.qpos[:] = pose
+            mujoco.mj_kinematics(model, data)
+            directions[frame] = data.site_xpos[tip_id] - data.xpos[base_id]
+        correction, elevation_deg = _rotations_to_horizontal(directions)
+        root_rotation = Rotation.from_euler("XYZ", out[:, rot_qadr : rot_qadr + 3])
+        angles = (correction * root_rotation).as_euler("XYZ")
+        out[:, rot_qadr : rot_qadr + 3] = np.unwrap(angles, axis=0)
+        elevations[side] = elevation_deg
+    return out, elevations
+
+
+def _object_freejoint_qpos_addresses(model: mujoco.MjModel) -> list[int]:
+    """Find free-joint qpos addresses for tracked object bodies."""
+    addresses: list[int] = []
+    for joint_id in range(model.njnt):
+        if model.jnt_type[joint_id] != mujoco.mjtJoint.mjJNT_FREE:
+            continue
+        body_id = int(model.jnt_bodyid[joint_id])
+        body_name = mujoco.mj_id2name(
+            model, mujoco.mjtObj.mjOBJ_BODY, body_id
+        )
+        if body_name and body_name.endswith("_object"):
+            addresses.append(int(model.jnt_qposadr[joint_id]))
+    return addresses
+
+
+def _keypoints_request_upright_display(keypoints_path: Path | None) -> bool:
+    if keypoints_path is None or not keypoints_path.is_file():
+        return False
+    try:
+        with np.load(str(keypoints_path), allow_pickle=False) as data:
+            if "object_upright" not in data.files:
+                return False
+            return bool(np.asarray(data["object_upright"]).item())
+    except (OSError, ValueError):
+        return False
+
+
 class ManoOverlay:
     """Orange MANO hand mesh(es) + tracked-object mesh from trajectory_keypoints.npz.
 
@@ -227,7 +588,15 @@ class ManoOverlay:
     via handle.position/wxyz.
     """
 
-    def __init__(self, keypoints_path: Path, outputs_root: Path, task: str):
+    def __init__(
+        self,
+        keypoints_path: Path,
+        outputs_root: Path,
+        task: str,
+        level_fingers: bool = False,
+        object_upright: bool = False,
+        object_up_axis: np.ndarray | None = None,
+    ):
         self.hands: dict[str, tuple[np.ndarray, np.ndarray]] = {}  # side -> (verts, faces)
         self.obj_qpos: np.ndarray | None = None
         self.obj_mesh: trimesh.Trimesh | None = None
@@ -258,6 +627,44 @@ class ManoOverlay:
                 self.obj_qpos = d[key].astype(np.float64)
                 self.n_frames = max(self.n_frames, self.obj_qpos.shape[0])
                 break
+
+        if level_fingers:
+            for side, (vertices, faces) in tuple(self.hands.items()):
+                wrist_key = f"qpos_wrist_{side}"
+                fingertip_key = f"qpos_finger_{side}"
+                if wrist_key not in d.files or fingertip_key not in d.files:
+                    continue
+                wrists = np.asarray(d[wrist_key][:, :3], dtype=np.float64)
+                middle_tips = np.asarray(
+                    d[fingertip_key][:, 2, :3], dtype=np.float64
+                )
+                correction, _ = _rotations_to_horizontal(middle_tips - wrists)
+                origins = wrists[: vertices.shape[0], None, :]
+                relative = vertices - origins
+                leveled = origins + np.einsum(
+                    "tij,tvj->tvi",
+                    correction.as_matrix()[: vertices.shape[0]],
+                    relative,
+                )
+                self.hands[side] = (leveled.astype(np.float32), faces)
+        if object_upright and self.obj_qpos is not None:
+            source_obj_qpos = self.obj_qpos.copy()
+            self.obj_qpos = _project_object_qpos_upright(
+                source_obj_qpos, [0], object_up_axis
+            )
+            before = Rotation.from_quat(source_obj_qpos[:, [4, 5, 6, 3]])
+            after = Rotation.from_quat(self.obj_qpos[:, [4, 5, 6, 3]])
+            correction = after * before.inv()
+            origins = source_obj_qpos[:, None, :3]
+            for side, (vertices, faces) in tuple(self.hands.items()):
+                n = min(vertices.shape[0], source_obj_qpos.shape[0])
+                corrected = vertices.copy()
+                corrected[:n] = origins[:n] + np.einsum(
+                    "tij,tvj->tvi",
+                    correction.as_matrix()[:n],
+                    vertices[:n] - origins[:n],
+                )
+                self.hands[side] = (corrected.astype(np.float32), faces)
 
         mesh_path = outputs_root / "assets" / "objects" / task / "visual.obj"
         if self.obj_qpos is not None and mesh_path.exists():
@@ -357,6 +764,36 @@ def main() -> None:
     data = mujoco.MjData(model)
 
     qpos = load_qpos(traj_path, model.nq)
+    display_object_upright = bool(args.display_object_upright)
+    object_qpos_addresses = _object_freejoint_qpos_addresses(model)
+    object_up_axis = (
+        np.asarray(args.display_object_up_vector, dtype=np.float64)
+        if args.display_object_up_vector is not None
+        else _axis_from_label(args.display_object_up_axis)
+    )
+    hand_root_addresses = _hand_root_qpos_addresses(model)
+    display_hand_level = bool(args.display_hand_level)
+    if display_hand_level:
+        print(
+            "WARNING: --display-hand-level independently rotates the hand and "
+            "alters hand-object relative geometry; do not use it to judge contact."
+        )
+    upright_qpos = None
+    hand_level_elevation: dict[str, np.ndarray] = {}
+    if display_object_upright and object_qpos_addresses:
+        upright_qpos = _project_scene_qpos_upright(
+            qpos,
+            object_qpos_addresses,
+            hand_root_addresses,
+            object_up_axis,
+        )
+    if display_hand_level:
+        upright_qpos, hand_level_elevation = _level_robot_fingers(
+            upright_qpos if upright_qpos is not None else qpos,
+            model,
+            hand_root_addresses,
+        )
+    upright_display = {"on": upright_qpos is not None}
 
     # IK reference (blue ghost) — optional.
     kin_qpos = None
@@ -374,6 +811,17 @@ def main() -> None:
             kin_qpos = None
         else:
             data_ref = mujoco.MjData(model)
+            if display_object_upright and object_qpos_addresses:
+                kin_qpos = _project_scene_qpos_upright(
+                    kin_qpos,
+                    object_qpos_addresses,
+                    hand_root_addresses,
+                    object_up_axis,
+                )
+            if display_hand_level:
+                kin_qpos, _ = _level_robot_fingers(
+                    kin_qpos, model, hand_root_addresses
+                )
 
     start = warmup_steps if (args.skip_warmup and warmup_steps > 0) else 0
     start = min(start, max(0, len(qpos) - 1))
@@ -400,38 +848,71 @@ def main() -> None:
         spec, model, xml_path=scene_path,
         build_ref=kin_qpos is not None, build_gui=False,
     )
+    # Convex decomposition geoms are useful for physics, but they seal hollow
+    # objects such as mugs and obscure the opening in a presentation replay.
+    for handle in viser_viewer._STATE.collision_geom_handles:
+        handle.visible = False
+    for handle, _body_id in viser_viewer._STATE.ref_body_handles:
+        handle.visible = False
+    for handle in viser_viewer._STATE.ref_geom_handles:
+        handle.visible = False
 
-    ego_camera = None
-    if camera_mode == "ego":
-        camera_position, camera_target = _ego_camera_preset(qpos, start, keypoints_path)
-        ego_camera = (camera_position, camera_target)
+    camera_preset = None
+    if camera_mode in {"ego", "top-down"}:
+        if camera_mode == "ego":
+            camera_position, camera_target, camera_up = _ego_camera_preset(
+                qpos,
+                start,
+                keypoints_path,
+                requested_distance=args.ego_distance,
+            )
+        else:
+            camera_position, camera_target, camera_up = _top_down_camera_preset(
+                upright_qpos if upright_qpos is not None else qpos,
+                start,
+                keypoints_path,
+                vertical_fov_deg=args.ego_fov,
+            )
+        camera_preset = (camera_position, camera_target, camera_up)
 
-        def apply_ego_camera(client) -> None:
+        def apply_camera_preset(client) -> None:
             client.camera.position = camera_position
             client.camera.look_at = camera_target
-            client.camera.up_direction = np.array([0.0, 0.0, 1.0])
+            client.camera.up_direction = camera_up
             client.camera.fov = np.deg2rad(args.ego_fov)
 
         @server.on_client_connect
-        def _set_ego_camera(client) -> None:
-            apply_ego_camera(client)
+        def _set_camera_preset(client) -> None:
+            apply_camera_preset(client)
 
         for client in server.get_clients().values():
-            apply_ego_camera(client)
+            apply_camera_preset(client)
 
     mano = (
-        ManoOverlay(keypoints_path, outputs_root, task)
+        ManoOverlay(
+            keypoints_path,
+            outputs_root,
+            task,
+            level_fingers=bool(display_hand_level),
+            object_upright=bool(display_object_upright),
+            object_up_axis=object_up_axis,
+        )
         if keypoints_path is not None
         else None
     )
     if mano is not None and mano.available:
         mano.build(server)
+        mano.set_visible(False, 0)
     else:
         mano = None
 
     def show_frame(frame_idx: int) -> None:
         fi = max(0, min(n_frames - 1, int(frame_idx)))
-        data.qpos[:] = qpos[fi + start]
+        shown_qpos = (
+            upright_qpos if upright_display["on"] and upright_qpos is not None
+            else qpos
+        )
+        data.qpos[:] = shown_qpos[fi + start]
         mujoco.mj_kinematics(model, data)  # populate body xpos/xquat for log_frame
         rf = ref_frame_for(fi)
         if kin_qpos is not None:
@@ -447,12 +928,25 @@ def main() -> None:
     # --- GUI: layer toggles + Frame slider + Play/Pause + FPS ---
     with server.gui.add_folder("Layers"):
         if mano is not None:
-            cb_mano = server.gui.add_checkbox("MANO reference (orange)", initial_value=True)
+            cb_mano = server.gui.add_checkbox(
+                "MANO reference (orange)", initial_value=False
+            )
         if kin_qpos is not None:
-            cb_ik = server.gui.add_checkbox("IK reference (blue)", initial_value=True)
+            cb_ik = server.gui.add_checkbox(
+                "IK reference (blue)", initial_value=False
+            )
         cb_robot = server.gui.add_checkbox(
             "Retargeted Sharpa hand + object", initial_value=True
         )
+        if upright_qpos is not None:
+            alignment_label = (
+                "Hand/table + object alignment (display only)"
+                if display_hand_level
+                else "Object/hand rigid alignment (display only)"
+            )
+            cb_upright = server.gui.add_checkbox(
+                alignment_label, initial_value=True
+            )
 
     frame_slider = server.gui.add_slider(
         "Frame", min=0, max=n_frames - 1, step=1, initial_value=0
@@ -484,6 +978,13 @@ def main() -> None:
         for h, bid in body_ids:
             if bid != 0:
                 h.visible = cb_robot.value
+
+    if upright_qpos is not None:
+
+        @cb_upright.on_update
+        def _(_) -> None:
+            upright_display["on"] = cb_upright.value
+            show_frame(int(frame_slider.value))
 
     playing = {"on": False}
     suppress_cb = {"on": False}  # don't double-render during programmatic advance
@@ -531,17 +1032,44 @@ def main() -> None:
         "Presentation: hand-only "
         f"(viewpoint={viewpoint}, camera_motion={camera_motion}, camera={camera_mode})"
     )
-    if ego_camera is not None:
-        camera_position, camera_target = ego_camera
+    if camera_preset is not None:
+        camera_position, camera_target, camera_up = camera_preset
         print(
-            "Ego camera:  position="
+            f"{camera_mode} camera:  position="
             f"{np.round(camera_position, 4).tolist()}, "
-            f"look_at={np.round(camera_target, 4).tolist()}"
+            f"look_at={np.round(camera_target, 4).tolist()}, "
+            f"up={np.round(camera_up, 4).tolist()}"
         )
     if camera_motion == "moving":
         print(
             "NOTE: this replay uses one stabilized ego camera. Per-frame camera "
             "extrinsics are not produced by the current reconstruction pipeline."
+        )
+    if upright_qpos is not None:
+        alignment_notes = []
+        if display_object_upright:
+            up_description = (
+                np.round(object_up_axis, 5).tolist()
+                if args.display_object_up_vector is not None
+                else args.display_object_up_axis
+            )
+            alignment_notes.append(
+                f"object semantic up {up_description} and the hand root are "
+                "rigidly aligned with world +Z"
+            )
+        if display_hand_level:
+            initial_elevation = max(
+                (float(values[start]) for values in hand_level_elevation.values()),
+                default=0.0,
+            )
+            alignment_notes.append(
+                f"robot finger elevation {initial_elevation:.1f}° is independently "
+                "projected onto the table"
+            )
+        print(
+            "NOTE: display alignment is enabled: "
+            + "; ".join(alignment_notes)
+            + ". The saved MJWP trajectory is unchanged."
         )
     print(
         f"Playing {n_frames} frames"
